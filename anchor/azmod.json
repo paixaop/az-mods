@@ -1,0 +1,18 @@
+{
+  "azmod": 1,
+  "id": "anchor",
+  "name": "Anchor",
+  "version": "0.6.1",
+  "author": "pedro",
+  "summary": "Larger A/B target controls and native detection of prepared loops, including paused B.",
+  "description": "Align a chosen point on B with an outgoing phrase or hot cue. Pick B phrase starts, Hot Cues or Set here in Ribbon, Card or Sidebar. Larger A/B target controls; no unavailable jump button. B targets stay fixed through beat jumps and loop changes. On verified EP147 2.00 firmware, a read-only worker reads current working loop boundaries even while B is paused. Other firmware uses observed repeated wraps. Bar.beat counters keep a large bar numeral and smaller beat suffix, turning amber in the final bar. No deck control, hooks or network.",
+  "license": "GPL-3.0-only",
+  "source": "https://github.com/paixaop/az-mods/tree/main/anchor",
+  "category": "tools",
+  "api": 1,
+  "firmware": [
+    "any"
+  ],
+  "hooks": false,
+  "min_core": "1.2.3"
+}

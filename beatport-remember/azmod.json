@@ -1,0 +1,17 @@
+{
+  "azmod": 1,
+  "id": "beatport-remember",
+  "name": "Beatport Remember",
+  "version": "0.2.1",
+  "author": "pedro",
+  "summary": "Remembers your Beatport Streaming login and fills the login screen for you.",
+  "description": "Stores the Beatport Streaming username and password on the deck after you log in once, then fills the Beatport login screen for you next time. It hooks two Beatport login functions in EP147, so it runs only on XDJ-AZ firmware 2.00 (ep147-9e9454e357389ece). Credentials are kept on the deck in /home/root/settings/azmod-community, readable by root only.",
+  "license": "GPL-3.0-only",
+  "source": "https://github.com/paixaop/az-mods/tree/main/beatport-remember",
+  "api": 1,
+  "firmware": [
+    "ep147-9e9454e357389ece"
+  ],
+  "hooks": true,
+  "min_core": "1.2.3"
+}
