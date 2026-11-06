@@ -2,15 +2,40 @@
  *
  * guide.h: the transition arithmetic, without any deck or core services.
  *
- * The mod reads a snapshot of each deck plus its ANLZ analysis and asks this module what to
- * show. Everything here is pure: times in, one plan out. The host tests exercise it directly.
+ * The mod copies SDK status into source milliseconds and asks this module what to show.
+ * Everything here is pure: times in, one plan out. The host tests exercise it directly.
  */
 #ifndef ANCHOR_GUIDE_H
 #define ANCHOR_GUIDE_H
 
 #include <stdint.h>
 
-#include "anlz.h"
+enum { AN_MAX_PHRASES = 1024, AN_MAX_HOT_CUES = 8, AN_MAX_MEMORY_CUES = 256 };
+
+typedef struct {
+    uint32_t time_ms;
+    uint16_t tempo;       /* BPM x 100 */
+    uint8_t beat_in_bar;  /* 1 = downbeat, 0 = unknown */
+} an_beat_t;
+
+typedef struct {
+    uint32_t start_ms, end_ms;
+    int category;
+    int joins_previous;  /* shares a grid boundary with the previous phrase */
+} an_phrase_t;
+
+typedef struct {
+    uint32_t time_ms;
+    unsigned slot;      /* hot cue 1..8; 0 for a memory cue */
+    char label[40];
+} an_cue_t;
+
+typedef struct {
+    const an_beat_t *beats;
+    const an_phrase_t *phrases;
+    const an_cue_t *cues;
+    int nbeats, nphrases, ncues;
+} an_analysis_t;
 
 typedef struct {
     int      loaded;
@@ -18,6 +43,7 @@ typedef struct {
     uint32_t pos_ms;   /* audio playhead, at 100 % pitch rate */
     double   bpm;      /* the deck's current BPM */
     double   rate;     /* audio ms per wall ms: 1.0 = normal pitch */
+    uint32_t sample_rate;
 } an_deck_t;
 
 typedef struct {
@@ -31,7 +57,6 @@ typedef struct {
 typedef struct {
     uint32_t ms;
     char     label[40];
-    int      chorus;
 } an_cand_t;
 
 enum {
@@ -65,8 +90,6 @@ typedef struct {
 
 /* A phrase, or a run of contiguous phrases of the same category when consolidation is on. */
 typedef struct {
-    int      first, last;  /* phrase indexes */
-    uint16_t kind;         /* kind of the first phrase */
     int      category;     /* AN_CAT_* */
     uint32_t start_ms, end_ms;
 } an_group_t;
@@ -93,14 +116,16 @@ enum {
     AN_NOTICE_NO_CUES,
     AN_NOTICE_NO_DROP,
     AN_NOTICE_LOOP_UNKNOWN,
+    AN_NOTICE_LOOP_UNAVAILABLE,
     AN_NOTICE_LOOP_AFTER_DROP,
     AN_NOTICE_HEAD_PAST_LOOP,
-    AN_NOTICE_LOOP_DETECTING,
     AN_NOTICE_START_OUTGOING,
     AN_NOTICE_B_TARGET_PASSED,
+    AN_NOTICE_DECK_STATE,
+    AN_NOTICE_CUES_UNAVAILABLE,
 };
 
-/* Keep the cue visible across UI ticks without showing PLAY NOW before its deadline. */
+/* Keep the cue visible across status callbacks once the PLAY deadline arrives. */
 #define AN_PLAY_GRACE_MS 150.0
 
 typedef struct {
@@ -129,33 +154,27 @@ typedef struct {
 } an_plan_t;
 
 /* Phrase groups for target selection: raw phrases, or contiguous same-category runs. */
-int an_phrase_groups(const an_anlz_t *a, int consolidate, an_group_t *out, int max);
-/* The category of a phrase kind in this file's mood. */
-int an_phrase_category(const an_anlz_t *a, uint16_t kind);
+int an_phrase_groups(const an_analysis_t *a, int consolidate, an_group_t *out, int max);
+/* The category of the SDK phrase's raw kind and mood. */
+int an_phrase_category(uint32_t mood, uint32_t kind);
 const char *an_category_name(int category);
 
 /* Upcoming phrase boundaries, hot cues and (for the grid rules) bar boundaries, sorted by
  * time. Each label is short enough for the strip. */
-int an_candidates(const an_anlz_t *a, uint32_t pos_ms, const an_target_opts_t *opts,
-                  an_cand_t *out, int max);
+int an_candidates(const an_analysis_t *a, uint32_t pos_ms, uint32_t sample_rate,
+                  const an_target_opts_t *opts, an_cand_t *out, int max);
 /* The target the settings pick without the DJ choosing one. */
-int an_auto_target(const an_anlz_t *a, uint32_t pos_ms, const an_target_opts_t *opts,
+int an_auto_target(const an_analysis_t *a, uint32_t pos_ms, const an_target_opts_t *opts,
                    an_cand_t *out);
 /* The first chorus (or first phrase) at/after B's head: where B's drop starts. */
-int an_find_drop(const an_anlz_t *b, uint32_t pos_ms, an_cand_t *out);
+int an_find_drop(const an_analysis_t *b, uint32_t pos_ms, an_cand_t *out);
 /* B destinations span the whole track, independent of head/loop position. */
-int an_b_candidates(const an_anlz_t *b, int hot_cues, an_cand_t *out, int max);
-int an_suggest_phrase(const an_anlz_t *b, uint32_t pos_ms, an_cand_t *out);
-/* Milliseconds per bar for display. */
-uint32_t an_bar_ms(const an_deck_t *d, const an_anlz_t *a);
+int an_b_candidates(const an_analysis_t *b, int hot_cues, an_cand_t *out, int max);
+double an_grid_bpm_at(const an_analysis_t *a, uint32_t pos_ms);
 
 /* The plan. `target` is what the DJ latched, or the auto target. now_ms is CLOCK_MONOTONIC
  * milliseconds. `released` is set by the caller when it saw B leave a loop. */
-void an_plan(const an_deck_t *a, const an_anlz_t *aa, const an_deck_t *b,
-             const an_anlz_t *ba, const an_loop_t *loop, uint32_t target_ms,
-             const char *target_label, uint64_t now_ms, an_plan_t *out);
-void an_plan_target(const an_deck_t *a, const an_anlz_t *aa, const an_deck_t *b,
-                    const an_anlz_t *ba, const an_loop_t *loop, uint32_t target_ms,
+void an_plan_target(const an_deck_t *a, const an_deck_t *b, const an_loop_t *loop, uint32_t target_ms,
                     const char *target_label, const an_cand_t *b_target,
                     uint64_t now_ms, an_plan_t *out);
 

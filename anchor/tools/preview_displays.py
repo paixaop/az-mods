@@ -11,7 +11,7 @@ ROOT = Path(__file__).resolve().parents[1]
 
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--sdk", type=Path, default=ROOT.parent / "sdk")
+    parser.add_argument("--sdk", type=Path, default=ROOT.parents[1] / "az-mods-sdk")
     parser.add_argument("--font", type=Path)
     args = parser.parse_args()
     from PIL import Image, ImageDraw, ImageFont
@@ -26,7 +26,7 @@ def main():
     subprocess.run(["make", "ui-test", f"AZ_SDK_INCLUDE={args.sdk.resolve() / 'include'}"],
                    cwd=ROOT, check=True)
     for key in ("ribbon", "card", "sidebar"):
-        for state in ("play", "beats", "prepared", "looping", "now", "exit", "selector", "b-selector", "needtracks", "ready", "detecting", "tab", "hidden-tab"):
+        for state in ("play", "beats", "prepared", "looping", "now", "exit", "selector", "b-selector", "needtracks", "ready", "reading-loop", "tab", "hidden-tab"):
             filename = dest / f"anchor-{key}-{state}"
             subprocess.run([str(ROOT / "out/render_ui"), str(filename.with_suffix(".json")), state, key], check=True)
             data = json.loads(filename.with_suffix(".json").read_text())

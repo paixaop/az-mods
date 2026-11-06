@@ -127,8 +127,8 @@ int main(int argc, char **argv)
     core.cfg_set = cfg_set;
 
     day = argc > 5 && !strcmp(argv[5], "day");
-    settings_init(&core);
-    settings_screen.on_enter(NULL);
+    const az_screen_v1 *screen = settings_init(&core, NULL);
+    screen->on_enter(NULL);
     if (argc > 4 && !strcmp(argv[4], "cue")) {
         settings_set(SET_RULE, 1); settings_set(SET_HCANY, 0); settings_set(SET_HCSLOT, 7);
     } else if (argc > 4 && !strcmp(argv[4], "grid")) settings_set(SET_RULE, 3);
@@ -137,14 +137,14 @@ int main(int argc, char **argv)
 
     az_rect a = { 0, 0, w, h };
     az_draw d;
-    settings_screen.on_draw(&d, a, NULL);
+    screen->on_draw(&d, a, NULL);
     if (w < 900 || h < 420) {
         int steps = argc > 4 && !strcmp(argv[4], "incoming") ? 6 : argc > 4 &&
                     (!strcmp(argv[4], "cue") || !strcmp(argv[4], "grid") || !strcmp(argv[4], "phrase")) ? 2 : 0;
         for (int i = 0; i < steps; i++) {
             az_event ev = {.kind = AZ_EV_KNOB, .dir = 1};
-            settings_screen.on_input(&ev, NULL);
-            ncalls = 0; settings_screen.on_draw(&d, a, NULL);
+            screen->on_input(&ev, NULL);
+            ncalls = 0; screen->on_draw(&d, a, NULL);
         }
     }
 

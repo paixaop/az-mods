@@ -60,6 +60,10 @@ void an_display_model(const an_plan_t *p, int outgoing, int incoming, an_display
         snprintf(m->detail, sizeof m->detail, "Play one track; cue the other before its drop");
         return;
     }
+    if (p->notice == AN_NOTICE_DECK_STATE && incoming < 0) {
+        message(m, "READING DECKS");
+        return;
+    }
     if (incoming < 0 || incoming >= 4) {
         message(m, "SELECT INCOMING DECK");
         snprintf(m->detail, sizeof m->detail, "Choose Incoming deck in Anchor settings");
@@ -104,22 +108,25 @@ void an_display_model(const an_plan_t *p, int outgoing, int incoming, an_display
         break;
     case AN_ST_OFF:
         if (p->notice == AN_NOTICE_B_TARGET_PASSED) message(m, "B TARGET PASSED");
-        else if (p->notice == AN_NOTICE_LOOP_DETECTING) message(m, "DETECTING LOOP");
+        else if (p->notice == AN_NOTICE_DECK_STATE) message(m, "READING DECKS");
         else if (p->notice == AN_NOTICE_LOOP_AFTER_DROP) message(m, "LOOP BEFORE TARGET");
         else if (p->notice == AN_NOTICE_HEAD_PAST_LOOP) message(m, "CUE AT LOOP START");
         else if (p->notice == AN_NOTICE_LOOP_UNKNOWN) message(m, "READING LOOP");
+        else if (p->notice == AN_NOTICE_LOOP_UNAVAILABLE) message(m, "LOOP STATE UNAVAILABLE");
         else message(m, "RESTART THIS DECK");
         break;
     case AN_ST_MISSED:
         message(m, "PICK A LATER TARGET");
         break;
     case AN_ST_NO_ANALYSIS:
-        if ((p->notice == AN_NOTICE_ANALYSIS_A || p->notice == AN_NOTICE_NO_CUES) &&
+        if ((p->notice == AN_NOTICE_ANALYSIS_A || p->notice == AN_NOTICE_NO_CUES ||
+             p->notice == AN_NOTICE_CUES_UNAVAILABLE) &&
             outgoing >= 0 && outgoing < 4)
             snprintf(m->deck, sizeof m->deck, "DECK %d", outgoing + 1);
         if (p->notice == AN_NOTICE_READING) message(m, "READING TRACKS");
         else if (p->notice == AN_NOTICE_NO_DROP) message(m, "SET B TARGET");
         else if (p->notice == AN_NOTICE_NO_CUES) message(m, "ADD HOT CUES");
+        else if (p->notice == AN_NOTICE_CUES_UNAVAILABLE) message(m, "HOT CUES UNAVAILABLE");
         else message(m, "ANALYSE TRACK");
         /* Error text identifies A/B in the existing detailed explanation. */
         if (p->notice == AN_NOTICE_ANALYSIS_A)
@@ -191,7 +198,7 @@ void an_sidebar_tab_draw(const az_core_v1 *c, az_draw *d, az_rect a, int expande
     /* Native FX tab: translucent charcoal; do not paint the surrounding handle gap. */
     unsigned char rgba[85 * 48 * 4];
     int blended = 0;
-    if (AZ_HAS(c, draw_image) && a.w <= 85 && a.h <= 48) {
+    if (a.w <= 85 && a.h <= 48) {
         for (int i = 0; i < a.w * a.h; i++) {
             int x = i % a.w, y = i / a.w;
             double coverage = 1;
@@ -348,8 +355,10 @@ void an_display_draw(const az_core_v1 *c, az_draw *d, az_rect a, int layout,
             else if (!strcmp(first, "LOOP BEFORE TARGET")) { first = "LOOP BEFORE"; second = "TARGET"; }
             else if (!strcmp(first, "LOAD TWO TRACKS")) { first = "LOAD TWO"; second = "TRACKS"; }
             else if (!strcmp(first, "PLAY OUTGOING DECK")) { first = "PLAY THE"; second = "OUTGOING"; }
-            else if (!strcmp(first, "DETECTING LOOP")) { first = "DETECTING"; second = "LOOP"; }
+            else if (!strcmp(first, "READING DECKS")) { first = "READING"; second = "DECKS"; }
             else if (!strcmp(first, "READING LOOP")) { first = "READING"; second = "LOOP"; }
+            else if (!strcmp(first, "LOOP STATE UNAVAILABLE")) { first = "LOOP STATE"; second = "UNAVAILABLE"; }
+            else if (!strcmp(first, "HOT CUES UNAVAILABLE")) { first = "HOT CUES"; second = "UNAVAILABLE"; }
             else if (!strcmp(first, "SELECT INCOMING DECK")) { first = "SELECT"; second = "INCOMING DECK"; }
             line(c, d, (az_rect){a.x + pad, a.y + 67, w, 52}, first, 30, 17, text, 1);
             line(c, d, (az_rect){a.x + pad, a.y + 124, w, 98}, second, 54, 18, accent, 1);

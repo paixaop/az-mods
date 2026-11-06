@@ -3,6 +3,7 @@
  * guide.c: target selection and the transition plan.
  */
 #include "guide.h"
+#include "azmod-timestamps.h"
 
 #include <math.h>
 #include <stdio.h>
@@ -34,31 +35,34 @@ static void fmt_bars(char *buf, size_t n, double ms, uint32_t bar_ms)
         snprintf(buf, n, "%.0f BARS", ms / bar);
 }
 
-/* Add a candidate, keeping the array sorted and dropping near-duplicates from another
- * source (a phrase end and a cue on the same beat, say). */
-static void add_cand(an_cand_t *out, int *n, int max, uint32_t ms, const char *label, int chorus)
+static int same_target(uint32_t a, uint32_t b, uint32_t sample_rate)
 {
-    if (ms == 0 || *n >= max) return;
-    for (int i = 0; i < *n; i++) {
-        int d = (int)ms - (int)out[i].ms;
-        if (d < 0) d = -d;
-        if (d <= 60) {
-            if (chorus && !out[i].chorus) out[i].chorus = 1;
-            return;
-        }
+    int order = compare_timestamps(a, b, 1000, sample_rate, 1);
+    if (order == AZ_TIME_INVALID) return 0;
+    return order == AZ_TIME_EQUAL;
+}
+
+/* Add a candidate, keeping the array sorted and dropping duplicates from another
+ * source (a phrase end and a cue on the same beat, say). */
+static void add_cand(an_cand_t *out, int *n, int max, uint32_t ms, uint32_t sample_rate,
+                     const char *label)
+{
+    if (*n >= max) return;
+    int at = 0, hi = *n;
+    while (at < hi) {
+        int mid = at + (hi - at) / 2;
+        if (out[mid].ms < ms) at = mid + 1;
+        else hi = mid;
     }
-    int at = *n;
-    while (at > 0 && out[at - 1].ms > ms) {
-        out[at] = out[at - 1];
-        at--;
-    }
+    if ((at < *n && same_target(out[at].ms, ms, sample_rate)) ||
+        (at > 0 && same_target(out[at - 1].ms, ms, sample_rate))) return;
+    memmove(&out[at + 1], &out[at], (size_t)(*n - at) * sizeof *out);
     out[at].ms = ms;
     copy_str(out[at].label, sizeof out[at].label, label);
-    out[at].chorus = chorus;
     (*n)++;
 }
 
-static int grid_next(const an_anlz_t *a, uint32_t pos_ms, int bars, uint32_t *when, int maxn)
+static int grid_next(const an_analysis_t *a, uint32_t pos_ms, int bars, uint32_t *when, int maxn)
 {
     if (!a || !a->nbeats || bars <= 0) return 0;
     int stride = bars * 4;
@@ -72,10 +76,9 @@ static int grid_next(const an_anlz_t *a, uint32_t pos_ms, int bars, uint32_t *wh
     return found;
 }
 
-int an_phrase_category(const an_anlz_t *a, uint16_t kind)
+int an_phrase_category(uint32_t mood, uint32_t kind)
 {
-    if (!a) return AN_CAT_OTHER;
-    if (a->mood == 1) {
+    if (mood == 1) {
         switch (kind) {
         case 1: return AN_CAT_INTRO;
         case 2: return AN_CAT_BUILD;
@@ -85,7 +88,7 @@ int an_phrase_category(const an_anlz_t *a, uint16_t kind)
         default: return AN_CAT_OTHER;
         }
     }
-    if (a->mood == 2 || a->mood == 3) {
+    if (mood == 2 || mood == 3) {
         switch (kind) {
         case 1: return AN_CAT_INTRO;
         case 2:
@@ -125,37 +128,28 @@ const char *an_category_name(int category)
     }
 }
 
-int an_phrase_groups(const an_anlz_t *a, int consolidate, an_group_t *out, int max)
+int an_phrase_groups(const an_analysis_t *a, int consolidate, an_group_t *out, int max)
 {
     int n = 0;
     if (!a || !a->nphrases || !out || max <= 0) return 0;
     for (int i = 0; i < a->nphrases; i++) {
-        uint32_t s, e;
-        if (an_anlz_phrase_start_ms(a, i, &s) != 0) continue;
-        if (an_anlz_phrase_end_ms(a, i, &e) != 0) continue;
-        int cat = an_phrase_category(a, a->phrases[i].kind);
-        if (consolidate && n > 0 && out[n - 1].category == cat && out[n - 1].last == i - 1 &&
-            a->phrases[i].start_beat <= a->phrases[i - 1].end_beat) {
-            out[n - 1].last = i;
-            out[n - 1].end_ms = e;
+        const an_phrase_t *phrase = &a->phrases[i];
+        if (consolidate && n > 0 && out[n - 1].category == phrase->category && phrase->joins_previous) {
+            out[n - 1].end_ms = phrase->end_ms;
             continue;
         }
         if (n >= max) break;
-        out[n].first = i;
-        out[n].last = i;
-        out[n].kind = a->phrases[i].kind;
-        out[n].category = cat;
-        out[n].start_ms = s;
-        out[n].end_ms = e;
+        out[n].category = phrase->category;
+        out[n].start_ms = phrase->start_ms;
+        out[n].end_ms = phrase->end_ms;
         n++;
     }
     return n;
 }
 
-static void label_group(char *dst, size_t n, const an_anlz_t *a, const an_group_t *g,
-                        int start_point)
+static void label_group(char *dst, size_t n, const an_group_t *g, int start_point)
 {
-    snprintf(dst, n, "%s %s", an_anlz_kind_name(a, g->kind), start_point ? "START" : "END");
+    snprintf(dst, n, "%s %s", an_category_name(g->category), start_point ? "START" : "END");
 }
 
 /* The phrase group the playhead is in, or the last one before it. */
@@ -169,19 +163,16 @@ static int group_at(const an_group_t *g, int n, uint32_t pos_ms)
     return at;
 }
 
-static int target_group(const an_anlz_t *a, const an_group_t *g, int n, int i,
-                        int start_point, an_cand_t *out)
+static int target_group(const an_group_t *g, int i, int start_point, an_cand_t *out)
 {
-    if (i < 0 || i >= n) return -1;
     memset(out, 0, sizeof *out);
     out->ms = start_point ? g[i].start_ms : g[i].end_ms;
-    label_group(out->label, sizeof out->label, a, &g[i], start_point);
-    out->chorus = g[i].category == AN_CAT_CHORUS;
+    label_group(out->label, sizeof out->label, &g[i], start_point);
     return 0;
 }
 
 /* Grid boundary fallback, and the grid rules. */
-static int target_grid(const an_anlz_t *a, uint32_t pos_ms, int bars, an_cand_t *out)
+static int target_grid(const an_analysis_t *a, uint32_t pos_ms, int bars, an_cand_t *out)
 {
     uint32_t when[1];
     if (!a || grid_next(a, pos_ms, bars, when, 1) <= 0) return -1;
@@ -191,16 +182,16 @@ static int target_grid(const an_anlz_t *a, uint32_t pos_ms, int bars, an_cand_t 
     return 0;
 }
 
-int an_auto_target(const an_anlz_t *a, uint32_t pos_ms, const an_target_opts_t *opts,
+int an_auto_target(const an_analysis_t *a, uint32_t pos_ms, const an_target_opts_t *opts,
                    an_cand_t *out)
 {
     memset(out, 0, sizeof *out);
-    if (!a || !a->valid || !opts) return -1;
+    if (!a || !opts) return -1;
 
     if (opts->rule == AN_RULE_HOTCUE) {
         for (int i = 0; i < a->ncues; i++) {
             const an_cue_t *c = &a->cues[i];
-            if (c->kind != AN_CUE_HOT) continue;
+            if (!c->slot) continue;
             if ((int64_t)c->time_ms <= (int64_t)pos_ms + 150) continue;
             if (!opts->hotcue_any && c->slot != (uint16_t)opts->hotcue_slot) continue;
             out->ms = c->time_ms;
@@ -217,8 +208,8 @@ int an_auto_target(const an_anlz_t *a, uint32_t pos_ms, const an_target_opts_t *
     if (opts->rule == AN_RULE_GRID16 || opts->rule == AN_RULE_GRID32)
         return target_grid(a, pos_ms, opts->rule == AN_RULE_GRID32 ? 32 : 16, out);
 
-    an_group_t g[256];
-    int n = an_phrase_groups(a, opts->consolidate, g, 256);
+    an_group_t g[AN_MAX_PHRASES];
+    int n = an_phrase_groups(a, opts->consolidate, g, AN_MAX_PHRASES);
     int start_point = opts->phrase_point == AN_POINT_START;
     if (n <= 0) return target_grid(a, pos_ms, 16, out);
 
@@ -230,7 +221,7 @@ int an_auto_target(const an_anlz_t *a, uint32_t pos_ms, const an_target_opts_t *
             if (g[i].category != cat) continue;
             uint32_t when = start_point ? g[i].start_ms : g[i].end_ms;
             if ((int64_t)when <= (int64_t)pos_ms + 150) continue;
-            return target_group(a, g, n, i, start_point, out);
+            return target_group(g, i, start_point, out);
         }
         /* no phrase of the chosen kind ahead: fall through to the current group so the
          * guide still has a target, rather than going blank on an unusual track */
@@ -241,10 +232,10 @@ int an_auto_target(const an_anlz_t *a, uint32_t pos_ms, const an_target_opts_t *
         if (from < 0) from = 0;
         for (int i = from; i < n; i++)
             if ((int64_t)g[i].start_ms > (int64_t)pos_ms + 150)
-                return target_group(a, g, n, i, 1, out);
+                return target_group(g, i, 1, out);
         for (int i = 0; i < n; i++)
             if ((int64_t)g[i].start_ms > (int64_t)pos_ms + 150)
-                return target_group(a, g, n, i, 1, out);
+                return target_group(g, i, 1, out);
         return -1;
     }
 
@@ -252,34 +243,34 @@ int an_auto_target(const an_anlz_t *a, uint32_t pos_ms, const an_target_opts_t *
     if (from < 0) from = 0;
     for (int i = from; i < n; i++)
         if ((int64_t)g[i].end_ms > (int64_t)pos_ms + 150)
-            return target_group(a, g, n, i, 0, out);
+            return target_group(g, i, 0, out);
     for (int i = 0; i < n; i++)
         if ((int64_t)g[i].end_ms > (int64_t)pos_ms + 150)
-            return target_group(a, g, n, i, 0, out);
+            return target_group(g, i, 0, out);
     return -1;
 }
 
-int an_candidates(const an_anlz_t *a, uint32_t pos_ms, const an_target_opts_t *opts,
-                  an_cand_t *out, int max)
+int an_candidates(const an_analysis_t *a, uint32_t pos_ms, uint32_t sample_rate,
+                  const an_target_opts_t *opts, an_cand_t *out, int max)
 {
     int n = 0;
-    if (!a || !a->valid || !out || max <= 0 || !opts) return 0;
+    if (!a || !out || max <= 0 || !opts) return 0;
     int start_point = opts->phrase_point == AN_POINT_START;
 
-    an_group_t g[256];
-    int ng = an_phrase_groups(a, opts->consolidate, g, 256);
+    an_group_t g[AN_MAX_PHRASES];
+    int ng = an_phrase_groups(a, opts->consolidate, g, AN_MAX_PHRASES);
     for (int i = 0; i < ng && n < max; i++) {
         uint32_t when = start_point ? g[i].start_ms : g[i].end_ms;
         if ((int64_t)when <= (int64_t)pos_ms + 250) continue;
         char label[40];
-        label_group(label, sizeof label, a, &g[i], start_point);
-        add_cand(out, &n, max, when, label, g[i].category == AN_CAT_CHORUS);
+        label_group(label, sizeof label, &g[i], start_point);
+        add_cand(out, &n, max, when, sample_rate, label);
     }
     for (int i = 0; i < a->ncues && n < max; i++) {
         if ((int64_t)a->cues[i].time_ms <= (int64_t)pos_ms + 250) continue;
         char label[40];
         const an_cue_t *c = &a->cues[i];
-        if (c->kind == AN_CUE_HOT) {
+        if (c->slot) {
             char slot[8];
             snprintf(slot, sizeof slot, "HC%u", c->slot);
             if (c->label[0] && strncmp(c->label, slot, strlen(slot)) != 0)
@@ -289,7 +280,7 @@ int an_candidates(const an_anlz_t *a, uint32_t pos_ms, const an_target_opts_t *o
         } else {
             snprintf(label, sizeof label, "%s", c->label[0] ? c->label : "CUE");
         }
-        add_cand(out, &n, max, c->time_ms, label, 0);
+        add_cand(out, &n, max, c->time_ms, sample_rate, label);
     }
     if (n < max && (ng == 0 || opts->rule == AN_RULE_GRID16 || opts->rule == AN_RULE_GRID32)) {
         int bars = opts->rule == AN_RULE_GRID32 ? 32 : 16;
@@ -298,55 +289,53 @@ int an_candidates(const an_anlz_t *a, uint32_t pos_ms, const an_target_opts_t *o
         for (int i = 0; i < got && n < max; i++) {
             char label[24];
             snprintf(label, sizeof label, "%d-BAR", bars);
-            add_cand(out, &n, max, when[i], label, 0);
+            add_cand(out, &n, max, when[i], sample_rate, label);
         }
     }
     return n;
 }
 
-int an_find_drop(const an_anlz_t *b, uint32_t pos_ms, an_cand_t *out)
+int an_find_drop(const an_analysis_t *b, uint32_t pos_ms, an_cand_t *out)
 {
     memset(out, 0, sizeof *out);
-    if (!b || !b->valid) return -1;
-    int fallback = -1;
-    uint32_t fallback_ms = 0;
-    if (b->has_phrases) {
-        for (int i = 0; i < b->nphrases; i++) {
-            uint32_t s;
-            if (an_anlz_phrase_start_ms(b, i, &s) != 0) continue;
-            if ((int64_t)s + 250 < (int64_t)pos_ms) continue;
-            if (an_anlz_kind_is_chorus(b, b->phrases[i].kind)) {
-                out->ms = s;
-                snprintf(out->label, sizeof out->label, "%s", an_anlz_kind_name(b, b->phrases[i].kind));
-                out->chorus = 1;
-                return 0;
-            }
-            if (fallback < 0) {
-                fallback = i;
-                fallback_ms = s;
-            }
-        }
-        if (fallback >= 0) {
-            out->ms = fallback_ms;
-            snprintf(out->label, sizeof out->label, "PHRASE");
-            return 0;
-        }
+    if (!b) return -1;
+    const an_phrase_t *first = NULL;
+    for (int i = 0; i < b->nphrases; i++) {
+        const an_phrase_t *phrase = &b->phrases[i];
+        if ((int64_t)phrase->start_ms + 250 < (int64_t)pos_ms) continue;
+        if (!first) first = phrase;
+        if (phrase->category != AN_CAT_CHORUS) continue;
+        out->ms = phrase->start_ms;
+        copy_str(out->label, sizeof out->label, an_category_name(phrase->category));
+        return 0;
+    }
+    if (first) {
+        out->ms = first->start_ms;
+        copy_str(out->label, sizeof out->label, "PHRASE");
+        return 0;
     }
     for (int i = 0; i < b->ncues; i++) {
         if (b->cues[i].time_ms + 200 < pos_ms) continue;
         out->ms = b->cues[i].time_ms;
-        snprintf(out->label, sizeof out->label, "CUE %.32s", b->cues[i].label);
+        if (b->cues[i].slot)
+            snprintf(out->label, sizeof out->label, "HC%u %.24s", b->cues[i].slot, b->cues[i].label);
+        else
+            snprintf(out->label, sizeof out->label, "CUE %.32s", b->cues[i].label);
         return 0;
     }
     return -1;
 }
 
-uint32_t an_bar_ms(const an_deck_t *d, const an_anlz_t *a)
+double an_grid_bpm_at(const an_analysis_t *a, uint32_t pos_ms)
 {
-    double bpm = (d && d->bpm >= 20.0 && d->bpm <= 400.0) ? d->bpm : 0.0;
-    if (bpm <= 0 && a) bpm = a->bpm;
-    if (bpm < 20.0 || bpm > 400.0) bpm = 120.0;
-    return (uint32_t)(4.0 * 60000.0 / bpm);
+    if (!a->nbeats) return 0;
+    int lo = 0, hi = a->nbeats - 1;
+    while (lo < hi) {
+        int mid = lo + (hi - lo + 1) / 2;
+        if (a->beats[mid].time_ms <= pos_ms) lo = mid;
+        else hi = mid - 1;
+    }
+    return a->beats[lo].tempo / 100.0;
 }
 
 static void set_action(an_plan_t *p, int state, int action, int accent, const char *line2,
@@ -365,8 +354,7 @@ static void set_action(an_plan_t *p, int state, int action, int accent, const ch
     }
 }
 
-void an_plan_target(const an_deck_t *a, const an_anlz_t *aa, const an_deck_t *b,
-             const an_anlz_t *ba, const an_loop_t *loop, uint32_t target_ms,
+void an_plan_target(const an_deck_t *a, const an_deck_t *b, const an_loop_t *loop, uint32_t target_ms,
              const char *target_label, const an_cand_t *b_target, uint64_t now_ms, an_plan_t *out)
 {
     memset(out, 0, sizeof *out);
@@ -378,22 +366,11 @@ void an_plan_target(const an_deck_t *a, const an_anlz_t *aa, const an_deck_t *b,
         out->b_target_ms = b_target->ms;
         copy_str(out->b_target, sizeof out->b_target, b_target->label);
     }
-    uint32_t bar = an_bar_ms(a, aa);
-    if (bar < 200) bar = 2000;
-
     if (!a || !b || !a->loaded || !b->loaded) {
         out->state = AN_ST_NEED_TRACKS;
         copy_str(out->line1, sizeof out->line1, "WAITING FOR TWO DECKS");
         copy_str(out->line2, sizeof out->line2, "LOAD A AND B IN THE 2-DECK VIEW");
         out->accent = 0;
-        return;
-    }
-    if (!aa || !aa->valid || ((!ba || !ba->valid) && !b_target)) {
-        out->notice = !aa || !aa->valid ? AN_NOTICE_ANALYSIS_A : AN_NOTICE_ANALYSIS_B;
-        out->state = AN_ST_NO_ANALYSIS;
-        copy_str(out->line1, sizeof out->line1, "NO PHRASE MAP");
-        copy_str(out->line2, sizeof out->line2, "A USB TRACK WITH REKORDBOX ANALYSIS IS NEEDED");
-        out->accent = 2;
         return;
     }
     if (!target_ms || (int64_t)target_ms <= (int64_t)a->pos_ms + 150) {
@@ -425,6 +402,7 @@ void an_plan_target(const an_deck_t *a, const an_anlz_t *aa, const an_deck_t *b,
 
     double arate = (a->rate > 0.2 && a->rate < 5.0) ? a->rate : 1.0;
     double brate = (b->rate > 0.2 && b->rate < 5.0) ? b->rate : 1.0;
+    uint32_t bar = a->bpm >= 20.0 && a->bpm <= 400.0 ? (uint32_t)(240000.0 / a->bpm) : 2000;
     double T = (double)now_ms + ((double)target_ms - (double)a->pos_ms) / arate;
     double T_out = T;
     if (loop && loop->valid) T_out = T - ((double)drop.ms - (double)loop->out_ms) / brate;
@@ -449,13 +427,13 @@ void an_plan_target(const an_deck_t *a, const an_anlz_t *aa, const an_deck_t *b,
     }
 
     if (loop && loop->valid) {
-        if (loop->out_ms <= loop->in_ms || loop->len_ms < 125) {
-            out->notice = AN_NOTICE_LOOP_UNKNOWN;
-            set_action(out, AN_ST_OFF, 0, 2, "LOOP UNKNOWN — START B TO DETECT IT", 0, bar, 0);
+        int order = compare_timestamps(loop->out_ms, drop.ms, 1000, b->sample_rate, 1);
+        if (order == AZ_TIME_INVALID || loop->out_ms <= loop->in_ms || loop->len_ms < 125) {
+            out->notice = AN_NOTICE_LOOP_UNAVAILABLE;
+            set_action(out, AN_ST_OFF, 0, 2, "LOOP TIMING UNAVAILABLE", 0, bar, 0);
             return;
         }
-        /* Native/grid conversions can differ by a millisecond at the same beat. */
-        if (loop->out_ms > drop.ms + 2u) {
+        if (order == AZ_TIME_AFTER) {
             out->notice = AN_NOTICE_LOOP_AFTER_DROP;
             set_action(out, AN_ST_OFF, 0, 2, "LOOP OUT IS AFTER B TARGET — MOVE THE LOOP", 0, bar, 0);
             return;
@@ -568,43 +546,22 @@ void an_plan_target(const an_deck_t *a, const an_anlz_t *aa, const an_deck_t *b,
     set_action(out, AN_ST_SINGLE, 1, 1, s, start - (double)now_ms, bar, (uint64_t)fmax(0.0, start));
 }
 
-/* Compatibility helper for callers that deliberately request an automatic destination. */
-void an_plan(const an_deck_t *a, const an_anlz_t *aa, const an_deck_t *b,
-             const an_anlz_t *ba, const an_loop_t *loop, uint32_t target_ms,
-             const char *target_label, uint64_t now_ms, an_plan_t *out)
-{
-    an_cand_t destination;
-    const an_cand_t *selected = b && an_find_drop(ba, b->pos_ms, &destination) == 0 ? &destination : NULL;
-    an_plan_target(a, aa, b, ba, loop, target_ms, target_label, selected, now_ms, out);
-}
-
-int an_suggest_phrase(const an_anlz_t *b, uint32_t pos_ms, an_cand_t *out)
-{
-    if (!b || !b->valid || !b->has_phrases) return -1;
-    an_anlz_t phrases = *b;
-    phrases.ncues = 0;
-    return an_find_drop(&phrases, pos_ms, out);
-}
-
-int an_b_candidates(const an_anlz_t *b, int hot_cues, an_cand_t *out, int max)
+int an_b_candidates(const an_analysis_t *b, int hot_cues, an_cand_t *out, int max)
 {
     int n = 0;
-    if (!b || !b->valid || !out || max < 1) return 0;
+    if (!b || !out || max < 1) return 0;
     if (hot_cues) {
         for (int i = 0; i < b->ncues && n < max; i++) {
             const an_cue_t *c = &b->cues[i];
-            if (c->kind != AN_CUE_HOT) continue;
+            if (!c->slot) continue;
             out[n].ms = c->time_ms;
-            out[n].chorus = 0;
             snprintf(out[n++].label, sizeof out[0].label, "HC%u %.28s", c->slot, c->label);
         }
     } else {
         for (int i = 0; i < b->nphrases && n < max; i++) {
-            uint32_t ms;
-            if (an_anlz_phrase_start_ms(b, i, &ms) != 0) continue;
-            out[n].ms = ms;
-            out[n].chorus = an_anlz_kind_is_chorus(b, b->phrases[i].kind);
-            snprintf(out[n++].label, sizeof out[0].label, "%.30s START", an_anlz_kind_name(b, b->phrases[i].kind));
+            const an_phrase_t *phrase = &b->phrases[i];
+            out[n].ms = phrase->start_ms;
+            snprintf(out[n++].label, sizeof out[0].label, "%.30s START", an_category_name(phrase->category));
         }
     }
     return n;

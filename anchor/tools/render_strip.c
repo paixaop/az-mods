@@ -26,9 +26,6 @@ static az_rect placed_area;
 static az_rect placed_tab;
 static az_surface *test_tab;
 static int saved_display = -1;
-static int test_view = AZ_VIEW_DECK, test_decks = 2;
-static az_deck_info picker_live[4];
-static int picker_live_enabled;
 
 static int text_width(const char *s, int px)
 {
@@ -92,9 +89,12 @@ static void request_redraw(void) {}
 static void surface_redraw(az_surface *s) { (void)s; }
 static void surface_place(az_surface *s, az_rect r) { if(s==test_tab)placed_tab=r;else placed_area=r; }
 static void surface_show(az_surface *s, int on) { (void)s; (void)on; }
-static int deck_info(int deck, az_deck_info *info) { if (picker_live_enabled) *info=picker_live[deck]; else info->loaded=0; return 0; }
-static int view(void) { return test_view; }
-static int deck_count(void) { return test_decks; }
+static int draw_image(az_draw *d, int x, int y, const unsigned char *rgba, int w, int h)
+{
+    (void)rgba;
+    fill_rect(d, x, y, w, h, 0x282828);
+    return 0;
+}
 static int cfg_get(const char *id, const char *key, int def)
 {
     assert(!strcmp(id, ANCHOR_MOD_ID));
@@ -112,11 +112,11 @@ static void cfg_set(const char *id, const char *key, int v)
 static void scene(const char *name)
 {
     settings_set(SET_SHOW, 1);
-    drawer_width = drawer_from = drawer_target = an_display_rect(ANCHOR_LAYOUT_SIDEBAR).w;
     ncalls = 0;
-    sel_open = sel_b = sel_wait_cues = 0;
+    sel_open = sel_b = sel_pending = 0;
     cur_a = 0; cur_b = 1;
-    sel_deck = cur_a; sel_gen = deck_gen[cur_a];
+    sel_deck = cur_a;
+    decks[0].sample_rate = decks[1].sample_rate = 48000; /* preview fixture clock */
     memset(&plan, 0, sizeof plan);
     plan.valid = 1;
     plan.state = AN_ST_SINGLE;
@@ -143,8 +143,8 @@ static void scene(const char *name)
         plan.state = AN_ST_NEED_TRACKS; cur_a = cur_b = -1;
     } else if (!strcmp(name, "ready")) {
         plan.notice = AN_NOTICE_START_OUTGOING; cur_a = cur_b = -1;
-    } else if (!strcmp(name, "detecting")) {
-        plan.state = AN_ST_OFF; plan.notice = AN_NOTICE_LOOP_DETECTING;
+    } else if (!strcmp(name, "reading-loop")) {
+        plan.state = AN_ST_OFF; plan.notice = AN_NOTICE_LOOP_UNKNOWN;
     } else if (!strcmp(name, "released")) {
         plan.state = AN_ST_RELEASED; plan.accent = 4;
     } else if (!strcmp(name, "missed")) {
@@ -168,11 +168,12 @@ static void scene(const char *name)
         }
         latched_ms = when[0];
         if (!strcmp(name, "b-selector")) {
-            sel_b = 1; sel_kind = 0; sel_deck = cur_b; sel_gen = deck_gen[cur_b];
+            sel_b = 1; sel_kind = 0; sel_deck = cur_b;
             static const char *starts[] = {"BUILD START", "CHORUS START", "BREAK START", "VERSE START",
                                           "CHORUS START", "OUTRO START", "BRIDGE START"};
             for (int i=0;i<sel_n;i++) snprintf(sel_cand[i].label,sizeof sel_cand[i].label,"%s",starts[i]);
             b_targets[cur_b].target = sel_cand[0];
+            b_targets[cur_b].valid = 1;
         }
     }
 }
@@ -185,10 +186,10 @@ static void verify_sidebar(az_draw *d)
     static int fake_body, fake_tab;
     strip=(az_surface *)&fake_body; sidebar_tab=(az_surface *)&fake_tab;
     test_tab=sidebar_tab;
-    settings_set(SET_SHOW,1); settings_set(SET_DISPLAY,2);
-    drawer_width=drawer_from=drawer_target=190;
-    cur_layout=ANCHOR_LAYOUT_SIDEBAR; cur_a=cur_b=-1; strip_shown=tab_shown=0;
-    tick();
+    cur_layout = 0;
+    settings_set(SET_SHOW, 1);
+    settings_set(SET_DISPLAY, 2);
+    update_guide(mono_ms());
     assert(tab_shown && strip_shown && plan.state==AN_ST_NEED_TRACKS);
     bounds_area=an_display_rect(ANCHOR_LAYOUT_SIDEBAR); ncalls=0; paint(d,bounds_area,NULL);
     an_display_t m; an_display_model(&plan,-1,-1,&m); assert(!strcmp(m.headline,"LOAD TWO TRACKS"));
@@ -198,28 +199,28 @@ static void verify_sidebar(az_draw *d)
     assert(placed_tab.x+placed_tab.w+AN_SIDEBAR_HANDLE_GAP==placed_area.x); /* open close handle sits on the left */
     az_event tap_tab={.kind=AZ_EV_TAP,.x=tab.x+tab.w/2,.y=tab.y+tab.h/2};
     assert(tab_input(&tap_tab,NULL)); assert(!settings_get(SET_SHOW));
-    animate_drawer(1000,0); animate_drawer(1090,0);
-    assert(drawer_width>0 && drawer_width<190 && placed_area.x+placed_area.w==1280);
-    animate_drawer(1180,0); tick();
-    assert(!strip_shown && tab_shown); /* the way back remains on screen */
+    assert(!strip_shown && tab_shown);
     assert(!memcmp(&placed_tab,&closed,sizeof closed));
     tap_tab.x=closed.x+closed.w/2; tap_tab.y=closed.y+closed.h/2;
     assert(tab_input(&tap_tab,NULL));
-    animate_drawer(1200,1); animate_drawer(1380,1); tick();
     assert(settings_get(SET_SHOW) && strip_shown && tab_shown);
-    test_decks=4; tick(); assert(!strip_shown && !tab_shown);
-    test_decks=2; test_view=AZ_VIEW_SOURCE; tick(); assert(!strip_shown && !tab_shown);
-    test_view=AZ_VIEW_DECK;
     tap_tab.x=fx.x+10; tap_tab.y=fx.y+10;
     assert(!tab_input(&tap_tab,NULL)); /* native Beat FX tap is never consumed */
     strip=sidebar_tab=NULL;
-    puts("Sidebar passed: empty-track help, tab separation, slide/hide/reopen and view gating");
+    puts("Sidebar passed: empty-track help, tab separation, event-driven hide and reopen");
 }
 
 static void tap(az_rect r)
 {
     az_event ev = {.kind = AZ_EV_TAP, .x = r.x + r.w / 2, .y = r.y + r.h / 2};
     assert(input(&ev, NULL) == 1);
+}
+
+static int same_source_ms(uint32_t a, uint32_t b)
+{
+    int order = compare_timestamps(a, b, 1000, 48000, 1); /* preview fixture clock */
+    if (order == AZ_TIME_INVALID) return 0;
+    return order == AZ_TIME_EQUAL;
 }
 
 static void verify(az_draw *d)
@@ -238,7 +239,7 @@ static void verify(az_draw *d)
     ncalls = 0; paint(d, bounds_area, NULL);
     uint32_t expected = sel_cand[per].ms;
     tap(chip_r[0]);
-    assert(!sel_open && latched_ms == expected);
+    assert(!sel_open && same_source_ms(latched_ms, expected));
     scene("selector"); paint(d, bounds_area, NULL);
     tap(close_r); assert(!sel_open);
     scene("selector"); paint(d, bounds_area, NULL);
@@ -251,59 +252,38 @@ static void verify(az_draw *d)
     assert(!chip_r[0].w && !close_r.w);
     bounds_area = normal;
 
-    /* Role inference must survive PLAY/release, but must not guess roles when two
-     * unrelated tracks were already playing, or carry them to a replacement track. */
-    az_deck_info inf[4] = {0};
-    inf[0].loaded = inf[1].loaded = 1;
-    inf[0].playing = inf[1].playing = 1;
-    memset(rt, 0, sizeof rt);
-    cur_a = cur_b = -1;
-    int a, b;
-    assert(choose_decks(inf, 0, &a, &b) == -1);
-    inf[1].playing = 0;
-    assert(choose_decks(inf, 0, &a, &b) == 0 && a == 0 && b == 1);
-    cur_a = a; cur_b = b;
-    role_gen_a = deck_gen[a]; role_gen_b = deck_gen[b];
-    inf[1].playing = 1;
-    assert(choose_decks(inf, 0, &a, &b) == 0 && b == 1);
-    deck_gen[1]++;
-    assert(choose_decks(inf, 0, &a, &b) == -1);
     saved_display = -1;
-    settings_init(C);
+    settings_init(C, settings_changed);
     assert(settings_get(SET_DISPLAY) == 1); /* Card is the default. */
-    assert(!strcmp(SET_DISPLAY_LABELS[0], "Ribbon"));
-    assert(!strcmp(SET_DISPLAY_LABELS[1], "Card"));
-    assert(!strcmp(SET_DISPLAY_LABELS[2], "Sidebar"));
     static int fake_surface;
     strip = (az_surface *)&fake_surface;
+    cur_layout = 0;
+    update_guide(mono_ms());
     for (int option = 0; option < 3; option++) {
-        /* Force a different current layout so the real tick must move the surface. */
-        cur_layout = (option + 1) % 3 + 1;
+        settings_set(SET_DISPLAY, (option + 1) % 3);
         settings_set(SET_DISPLAY, option);
-        tick();
         az_rect expected_area = an_display_rect(option + 1);
         assert(cur_layout == option + 1);
         assert(!memcmp(&placed_area, &expected_area, sizeof placed_area));
     }
-    settings_init(C);
+    settings_init(C, settings_changed);
     assert(settings_get(SET_DISPLAY) == 2 && selected_layout() == ANCHOR_LAYOUT_SIDEBAR);
     settings_set(SET_SHOW, 0);
     assert(settings_get(SET_SHOW) == 0);
     strip = NULL;
-    puts("UI integration passed: all states, text bounds/overlap, target picker, deck roles and live display switching");
+    puts("UI integration passed: all states, text bounds/overlap, target picker and live display switching");
 }
 
 static void verify_b_controls(az_draw *d, int layout)
 {
     cur_layout=layout; bounds_area=an_display_rect(layout); bounds_area.x=bounds_area.y=0;
     scene("play");
-    an_beat_t beats[3]={{.time_ms=0},{.time_ms=8000},{.time_ms=16000}};
-    an_phrase_t phrases[2]={{.start_beat=1,.end_beat=2,.kind=2},{.start_beat=2,.end_beat=3,.kind=5}};
-    an_cue_t cues[1]={{.kind=AN_CUE_HOT,.slot=3,.time_ms=6000}};
-    deck_analysis[1]=(an_anlz_t){.valid=1,.has_phrases=1,.has_grid=1,.mood=1,
-        .beats=beats,.nbeats=3,.phrases=phrases,.nphrases=2,.cues=cues,.ncues=1};
-    status[1]=ST_OK;cues_requested[1]=1;
-    picker_live_enabled=1;picker_live[1]=(az_deck_info){.loaded=1,.pos_s=3.217};
+    const an_phrase_t phrases[] = {{0, 8000, AN_CAT_BUILD, 0}, {8000, 16000, AN_CAT_CHORUS, 1}};
+    const an_cue_t cues[] = {{.slot = 3, .time_ms = 6000}};
+    decks[1] = (an_deck_status_t){
+        .loaded = 1, .position_valid = 1, .pos_ms = 3217, .sample_rate = 48000,
+        .analysis = {.phrases = phrases, .nphrases = 2, .cues = cues, .ncues = 1},
+    };
     paint(d,bounds_area,NULL);
     assert(controls_ok && target_controls[1].w);
     assert(target_controls[0].h>=36 && target_controls[1].h>=36);
@@ -313,16 +293,16 @@ static void verify_b_controls(az_draw *d, int layout)
     int saw_set_here=0;
     for(int i=0;i<ncalls;i++) if(!calls[i].kind && !strcmp(calls[i].s,"SET HERE")) saw_set_here=1;
     assert(saw_set_here); /* narrow sidebar must retain the full action label */
-    tap(chip_r[1]); assert(!sel_open && b_targets[1].target.ms==8000);
+    tap(chip_r[1]); assert(!sel_open && same_source_ms(b_targets[1].target.ms, 8000));
     ncalls=0;paint(d,bounds_area,NULL);tap(target_controls[1]);
     ncalls=0;paint(d,bounds_area,NULL);tap(kind_r[1]);
     assert(sel_kind==1 && sel_n==1);
     ncalls=0;paint(d,bounds_area,NULL);tap(chip_r[0]);
-    assert(b_targets[1].target.ms==6000);
+    assert(same_source_ms(b_targets[1].target.ms, 6000));
     ncalls=0;paint(d,bounds_area,NULL);tap(target_controls[1]);
     ncalls=0;paint(d,bounds_area,NULL);tap(kind_r[2]);
-    assert(!sel_open && b_targets[1].target.ms==3217);
-    picker_live_enabled=0; memset(deck_analysis,0,sizeof deck_analysis);memset(status,0,sizeof status);
+    assert(!sel_open && same_source_ms(b_targets[1].target.ms, 3217));
+    memset(decks, 0, sizeof decks);
     puts("B UI passed: separate A/B controls, phrase/Hot Cue/Set here taps");
 }
 
@@ -334,14 +314,13 @@ int main(int argc, char **argv)
     }
     static az_core_v1 core;
     core.size = sizeof core;
-    core.draw_text = draw_text; core.fill_rect = fill_rect; core.draw_rect = draw_rect;
+    core.draw_text = draw_text; core.fill_rect = fill_rect; core.draw_rect = draw_rect; core.draw_image = draw_image;
     core.color = color; core.text_width = text_width; core.request_redraw = request_redraw;
     core.surface_redraw = surface_redraw; core.cfg_get = cfg_get; core.cfg_set = cfg_set;
     core.surface_place = surface_place; core.surface_show = surface_show;
-    core.deck_info = deck_info; core.view = view; core.deck_count = deck_count;
     C = &core;
     az_draw d;
-    settings_init(C);
+    settings_init(C, settings_changed);
     cur_layout = ANCHOR_LAYOUT_CARD;
     if (argc > 3) {
         if (!strcmp(argv[3], "ribbon")) cur_layout = ANCHOR_LAYOUT_RIBBON;

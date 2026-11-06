@@ -1,258 +1,369 @@
-/* SPDX-License-Identifier: GPL-3.0-only
- * Track reload / eject regressions against the production lifecycle code. */
+/* SPDX-License-Identifier: GPL-3.0-only */
+/* Drive the registered callback with the SDK's borrowed, load-scoped views. */
 #include <assert.h>
-#include <stdio.h>
-#include <string.h>
-#include <stdlib.h>
-#define an_loaded_read fixture_loaded_read
-#define an_resolve_analysis fixture_resolve_analysis
+#include <stdint.h>
+#include <time.h>
+
+static uint64_t fixture_ms = UINT64_C(5000000000);
+
+static int fixture_clock(clockid_t clock, struct timespec *ts)
+{
+    assert(clock == CLOCK_MONOTONIC);
+    ts->tv_sec = (time_t)(fixture_ms / 1000);
+    ts->tv_nsec = (long)(fixture_ms % 1000) * 1000000;
+    return 0;
+}
+
+#define clock_gettime fixture_clock
 #include "anchor.c"
-#undef an_loaded_read
-#undef an_resolve_analysis
+#undef clock_gettime
 
-static az_deck_info live[4];
-static unsigned sample[4];
-static int reads, cue_reads, eject_during_read, replace_during_read;
-static int late_phrases, cue_failure;
-static int transient_info, transient_after_read;
-static int early_state_attempts;
-static int fake_surface;
+struct az_surface {
+    az_surface_v1 desc;
+    az_rect area;
+    int shown;
+    unsigned redraws;
+};
 
-static int info(int d, az_deck_info *out)
+static az_surface surfaces[2];
+static unsigned nsurfaces;
+static az_deck_status_fn listener;
+static az_deck_watch_v1 watch;
+static void *listener_user;
+
+static az_surface *create(const char *id, const az_surface_v1 *desc)
 {
-    if (transient_info) { transient_info--; return -1; }
-    *out = live[d]; return 0;
-}
-static int view(void) { return AZ_VIEW_DECK; }
-static int count(void) { return 2; }
-static void show(az_surface *s, int on) { (void)s; (void)on; }
-static void redraw(az_surface *s) { (void)s; }
-static int cfg(const char *id, const char *key, int def) { (void)id; (void)key; return def; }
-
-int fixture_loaded_read(int d, an_anlz_t *out, char *why, size_t n)
-{
-    (void)why; (void)n;
-    reads++;
-    if (early_state_attempts) {
-        early_state_attempts--;
-        snprintf(why,n,"the loaded state was not found");
-        return AN_LOADED_RETRY;
-    }
-    if (transient_after_read) { transient_info = transient_after_read; transient_after_read = 0; }
-    memset(out, 0, sizeof *out);
-    out->valid = out->has_grid = out->has_phrases = 1;
-    if (late_phrases) { out->has_phrases = 0; late_phrases--; }
-    out->bpm = 120;
-    out->nbeats = 2;
-    out->mood = 1;
-    out->nphrases = 1;
-    out->phrases = calloc(1, sizeof *out->phrases);
-    out->phrases[0] = (an_phrase_t){.start_beat = 1, .end_beat = 2, .kind = 5};
-    out->beats = calloc(2, sizeof *out->beats);
-    out->beats[0].time_ms = sample[d];
-    out->beats[1].time_ms = sample[d] + 500;
-    if (eject_during_read) {
-        eject_during_read = 0;
-        live[d].loaded = 0;
-        on_deck_event(d, AZ_DECK_EJECTED, NULL);
-    }
-    if (replace_during_read) {
-        replace_during_read = 0;
-        live[d].content_id++;
-    }
-    return 0;
+    assert(!strcmp(id, MOD_ID) && nsurfaces < 2);
+    assert(desc->views == AZ_VIEW_TWO_DECKS && desc->on_input && desc->on_paint);
+    surfaces[nsurfaces].desc = *desc;
+    return &surfaces[nsurfaces++];
 }
 
-int fixture_resolve_analysis(const az_core_v1 *core, const char *id, uint32_t cid,
-                             const char *title, const char *artist, an_anlz_t *out,
-                             char *why, int n)
+static void place(az_surface *s, az_rect r) { s->area = r; }
+static void show(az_surface *s, int on) { s->shown = on; }
+static void redraw(az_surface *s) { s->redraws++; }
+static void redraw_page(void) {}
+static void draw_text(az_draw *d, int x, int y, const char *s, int px, uint32_t color)
+{ (void)d; (void)x; (void)y; (void)s; (void)px; (void)color; }
+static void fill(az_draw *d, int x, int y, int w, int h, uint32_t color)
+{ (void)d; (void)x; (void)y; (void)w; (void)h; (void)color; }
+static void rect(az_draw *d, int x, int y, int w, int h, int line, uint32_t color)
+{ (void)line; fill(d, x, y, w, h, color); }
+static int image(az_draw *d, int x, int y, const unsigned char *rgba, int w, int h)
+{ (void)rgba; fill(d, x, y, w, h, 0); return 0; }
+static int width(const char *s, int px) { return (int)strlen(s) * px / 2; }
+static uint32_t color(int role) { (void)role; return 0xffffff; }
+
+static int subscribe(const char *id, const az_deck_watch_v1 *w, az_deck_status_fn fn, void *user,
+                     az_deck_subscription *out)
 {
-    (void)core; (void)id; (void)title; (void)artist; (void)why; (void)n;
-    cue_reads++;
-    memset(out, 0, sizeof *out);
-    out->valid = 1;
-    out->ncues = 1;
-    out->cues = calloc(1, sizeof *out->cues);
-    out->cues[0].time_ms = cid * 1000;
-    out->cues[0].kind = AN_CUE_HOT;
-    if (cue_failure) {
-        snprintf(why, (size_t)n, "could not read the hot cue analysis");
-        return -1; /* Also verify cleanup when a resolver leaves a partial allocation. */
-    }
-    return 0;
+    assert(!strcmp(id, MOD_ID) && w->size == sizeof *w && w->version == AZ_DATA_VERSION);
+    assert(w->deck_mask == 3 && w->position_hz == 30 && !listener);
+    listener = fn;
+    listener_user = user;
+    watch = *w;
+    *out = 1;
+    return AZ_OK;
 }
 
-static void reset(void)
+static int release(const char *id, az_deck_subscription handle)
+{ (void)id; (void)handle; return AZ_OK; }
+
+static const az_library_v1 *library(uint32_t abi)
 {
-    static az_core_v1 core;
-    core.size = sizeof core;
-    core.deck_info = info; core.view = view; core.deck_count = count;
-    core.surface_show = show; core.surface_redraw = redraw; core.cfg_get = cfg;
-    C = &core;
-    settings_init(C);
-    for (int d = 0; d < 4; d++) an_anlz_free(&deck_analysis[d]);
-    memset(live, 0, sizeof live);
-    memset(status, 0, sizeof status);
-    memset(latest_seq, 0, sizeof latest_seq);
-    memset(queued, 0, sizeof queued);
-    memset(last_loaded, 0, sizeof last_loaded);
-    memset(load_notified, 0, sizeof load_notified);
-    memset(cues_requested, 0, sizeof cues_requested);
-    memset(rt, 0, sizeof rt);
-    memset(&plan, 0, sizeof plan);
-    q_next = reads = cue_reads = eject_during_read = replace_during_read = 0;
-    late_phrases = cue_failure = 0;
-    transient_info = transient_after_read = 0;
-    early_state_attempts = 0;
-    cur_a = 0; cur_b = 1;
-    latched_ms = sel_n = sel_open = layout_ok = 0;
-    cur_layout = ANCHOR_LAYOUT_CARD;
-    strip = (az_surface *)&fake_surface;
-    strip_shown = 0;
-    worker_ok = loaded_supported = 1;
+    static const az_library_v1 lib = {
+        .size = sizeof lib, .abi = AZ_LIBRARY_ABI,
+        .on_deck_status = subscribe, .deck_status_release = release,
+    };
+    return abi == AZ_LIBRARY_ABI ? &lib : NULL;
 }
 
-static void track(int d, unsigned cid)
+static const az_core_v1 core = {
+    .size = sizeof core, .abi = AZ_MOD_ABI,
+    .library_service = library, .surface_create = create, .surface_show = show,
+    .surface_place = place, .surface_redraw = redraw, .request_redraw = redraw_page,
+    .draw_text = draw_text, .fill_rect = fill, .draw_rect = rect, .draw_image = image, .text_width = width, .color = color,
+};
+
+typedef struct {
+    uint64_t epoch, seq;
+    unsigned deck, rate;
+    az_status_load_v1 load;
+    az_status_transport_v1 transport;
+    az_status_position_v1 position;
+    az_status_tempo_v1 tempo;
+    az_status_grid_v1 grid;
+    az_status_phrases_v1 phrases;
+    az_status_cues_v1 cues;
+    az_status_loop_v1 loop;
+    az_beat beats[257];
+    az_phrase rows[4];
+    az_cue_entry hot[2], memory;
+} fixture_t;
+
+static void receipt(fixture_t *f, az_status_topic_v1 *topic, unsigned field,
+                    az_status_field_info_v1 *info, unsigned availability, unsigned count)
 {
-    live[d].loaded = 1;
-    live[d].content_id = cid;
-    snprintf(live[d].title, sizeof live[d].title, "Track %u", cid);
-    snprintf(live[d].artist, sizeof live[d].artist, "Artist");
-    sample[d] = cid * 100;
-    note_track_change(d, &live[d]);
+    uint64_t bit = az_status_field_bit(field);
+    if (availability != AZ_AVAIL_UNSUPPORTED) topic->supported |= bit;
+    else topic->supported &= ~bit;
+    if (availability == AZ_AVAIL_READY) topic->valid |= bit;
+    else topic->valid &= ~bit;
+    *info = (az_status_field_info_v1){
+        .info = {availability, AZ_PROV_NATIVE, f->seq + 1, fixture_ms * 1000000},
+        .scope = AZ_STATUS_LOAD_SCOPE, .scope_id = f->epoch, .count = count, .provider_id = f->deck + 10,
+    };
 }
 
-static request_t next(void)
+#define FIELD(f, topic, field, selector, availability, count) \
+    receipt((f), &(f)->topic.header, AZ_STATUS_##selector, &(f)->topic.field##_info, availability, count)
+
+static az_status_coord_v1 coordinate(const fixture_t *f, double seconds)
 {
-    request_t req;
-    assert(take_request(&req));
-    req.not_before_ms = 0; /* Test the worker without its hardware settling delay. */
-    return req;
+    return (az_status_coord_v1){.seconds = seconds, .samples = llround(seconds * f->rate), .rate_hz = f->rate};
 }
 
-static void finish(void)
+static void head(fixture_t *f, double seconds)
 {
-    request_t req = next();
-    process_request(&req);
+    f->position.head = coordinate(f, seconds);
+    FIELD(f, position, head, POSITION_HEAD, AZ_AVAIL_READY, 1);
+}
+
+static void playback(fixture_t *f, int state)
+{
+    f->transport.state = state;
+    f->transport.direction = state == AZ_PLAYBACK_PLAYING ? AZ_STATUS_DIRECTION_FORWARD : AZ_STATUS_DIRECTION_STATIONARY;
+    f->transport.rate = state == AZ_PLAYBACK_PLAYING ? 1.0 : 0;
+    FIELD(f, transport, state, TRANSPORT_STATE, AZ_AVAIL_READY, 1);
+    FIELD(f, transport, direction, TRANSPORT_DIRECTION, AZ_AVAIL_READY, 1);
+    FIELD(f, transport, rate, TRANSPORT_RATE, AZ_AVAIL_READY, 1);
+}
+
+static void loop_bounds(fixture_t *f, int engaged, double in, double out)
+{
+    f->loop.engaged = engaged;
+    f->loop.working_in = coordinate(f, in);
+    f->loop.working_out = coordinate(f, out);
+    FIELD(f, loop, engaged, LOOP_ENGAGED, AZ_AVAIL_READY, 1);
+    FIELD(f, loop, working_in, LOOP_WORKING_IN, engaged ? AZ_AVAIL_READY : AZ_AVAIL_EMPTY, engaged);
+    FIELD(f, loop, working_out, LOOP_WORKING_OUT, engaged ? AZ_AVAIL_READY : AZ_AVAIL_EMPTY, engaged);
+}
+
+static void link_phrases(fixture_t *f)
+{
+    az_status_field_info_v1 *info = &f->grid.current_info;
+    f->phrases.current_grid = (az_status_grid_ref_v1){
+        f->epoch, info->provider_id, info->info.revision, info->info.provenance, AZ_STATUS_GRID_CURRENT,
+    };
+    FIELD(f, phrases, current_grid, PHRASES_CURRENT_GRID, AZ_AVAIL_READY, 1);
+}
+
+static void loaded(fixture_t *f, unsigned deck, uint64_t epoch, int state, double pos)
+{
+    uint64_t seq = f->seq;
+    *f = (fixture_t){.deck = deck, .epoch = epoch, .seq = seq, .rate = deck ? 48000 : 44100};
+#define HEADER(topic) f->topic.header = (az_status_topic_v1){.size = sizeof f->topic, .version = AZ_DATA_VERSION}
+    HEADER(load); HEADER(transport); HEADER(position); HEADER(tempo);
+    HEADER(grid); HEADER(phrases); HEADER(cues); HEADER(loop);
+#undef HEADER
+    f->load.state = AZ_STATUS_LOAD_LOADED;
+    FIELD(f, load, state, LOAD_STATE, AZ_AVAIL_READY, 1);
+    f->load.state_info.scope = AZ_STATUS_UNIT;
+    f->load.state_info.scope_id = deck + 1;
+    playback(f, state);
+    head(f, pos);
+    loop_bounds(f, 0, 0, 0);
+    f->tempo.current_bpm = 120;
+    FIELD(f, tempo, current_bpm, TEMPO_CURRENT_BPM, AZ_AVAIL_READY, 1);
+    f->tempo.current_bpm_info.scope = AZ_STATUS_UNIT;
+    f->tempo.current_bpm_info.scope_id = deck + 1;
+    f->tempo.original_bpm = 120;
+    FIELD(f, tempo, original_bpm, TEMPO_ORIGINAL_BPM, AZ_AVAIL_READY, 1);
+
+    for (unsigned i = 0; i < 257; i++) f->beats[i] = (az_beat){i * .5, 120, i % 4 + 1, 0};
+    for (unsigned i = 0; i < 4; i++) f->rows[i] = (az_phrase){i * 64, (i + 1) * 64, i % 2 ? 5 : 2, 1, 0, 0};
+    f->grid.current = f->beats;
+    FIELD(f, grid, current, GRID_CURRENT, AZ_AVAIL_READY, 257);
+    f->phrases.current = f->rows;
+    FIELD(f, phrases, current, PHRASES_CURRENT, AZ_AVAIL_READY, 4);
+    link_phrases(f);
+
+    f->hot[0] = (az_cue_entry){.size = sizeof *f->hot, .version = AZ_DATA_VERSION, .valid = AZ_CUE_START,
+                               .classification = AZ_CUE_HOT, .slot = 3, .start_s = 80};
+    f->hot[1] = f->hot[0];
+    f->hot[1].slot = 1;
+    f->hot[1].start_s = 0;
+    f->memory = (az_cue_entry){.size = sizeof f->memory, .version = AZ_DATA_VERSION, .valid = AZ_CUE_START,
+                               .classification = AZ_CUE_MEMORY, .entry_id = 1, .start_s = 10};
+    f->cues.live_hot = f->hot;
+    f->cues.live_memory = &f->memory;
+    FIELD(f, cues, live_hot, CUES_LIVE_HOT, AZ_AVAIL_READY, 2);
+    FIELD(f, cues, live_memory, CUES_LIVE_MEMORY, AZ_AVAIL_READY, 1);
+}
+
+static void publish(fixture_t *f, unsigned kind, uint64_t topics)
+{
+    az_deck_status_view_v1 view = {
+        .size = sizeof view, .version = AZ_DATA_VERSION,
+        .load = &f->load, .transport = &f->transport, .position = &f->position, .tempo = &f->tempo,
+        .grid = &f->grid, .phrases = &f->phrases, .cues = &f->cues, .loop = &f->loop,
+    };
+    az_deck_status_event_v1 e = {
+        .size = sizeof e, .version = AZ_DATA_VERSION, .kind = kind, .deck = f->deck, .view = &view,
+        .subscription = 1, .sequence = ++f->seq, .load_epoch = f->epoch,
+        .topics = watch.topics, .changed_topics = topics, .published_ns = fixture_ms * 1000000,
+        .lost_topics = kind == AZ_STATUS_RESYNC ? topics : 0,
+        .loss_reason = kind == AZ_STATUS_RESYNC ? AZ_STATUS_CAPTURE_GAP : 0,
+    };
+    listener(&e, listener_user);
+}
+
+static void expect_ms(uint64_t first, uint64_t second, unsigned rate)
+{
+    int order = compare_timestamps(first, second, 1000, rate, 1);
+    assert(order != AZ_TIME_INVALID && order == AZ_TIME_EQUAL);
 }
 
 int main(void)
 {
-    reset();
-    /* A worker already reading an ejected track must never publish its result. */
-    latest_seq[0] = 17;
-    clear_deck_analysis(0);
-    assert(latest_seq[0] != 17);
+    const az_mod_v1 *mod = az_mod_v1_entry();
+    assert(!mod->tick && !mod->on_frame);
+    az_core_v1 no_status = core;
+    no_status.library_service = NULL;
+    assert(mod->init(&no_status) != AZ_OK);
+    assert(mod->init(&core) == AZ_OK && listener && nsurfaces == 2);
+    assert(!strip_shown && !tab_shown);
 
-    /* Reload and Refresh read the source again even with identical id/title. */
-    track(0, 1); finish();
-    assert(reads == 1 && slot_anlz(0)->beats[0].time_ms == 100);
-    sample[0] = 777;
-    on_deck_event(0, AZ_DECK_LOADED, NULL);
-    assert(!slot_anlz(0));
-    note_track_change(0, &live[0]); finish();
-    assert(reads == 2 && slot_anlz(0)->beats[0].time_ms == 777);
-    sample[0] = 888;
-    settings_set(SET_REFRESH, 1);
-    tick();
-    assert(status[0] == ST_PENDING && !slot_anlz(0));
-    finish();
-    assert(reads == 3 && slot_anlz(0)->beats[0].time_ms == 888);
+    fixture_t a = {0}, b = {0};
+    loaded(&a, 0, 1, AZ_PLAYBACK_PLAYING, 1);
+    loaded(&b, 1, 2, AZ_PLAYBACK_PAUSED, 16);
+    publish(&a, AZ_STATUS_INITIAL, watch.topics);
+    publish(&b, AZ_STATUS_INITIAL, watch.topics);
+    assert(strip_shown && cur_a == 0 && cur_b == 1 && plan.state == AN_ST_SINGLE);
+    expect_ms(plan.b_target_ms, 32000, b.rate);
+    expect_ms(plan.action_wall_ms, fixture_ms + 15000, 1000);
 
-    /* Eject before/during a read cannot restore analysis for the retired load. */
-    reset(); track(0, 1);
-    request_t old = next();
-    on_deck_event(0, AZ_DECK_EJECTED, NULL);
-    live[0].loaded = 0;
-    process_request(&old);
-    assert(reads == 0 && status[0] == ST_NONE && !slot_anlz(0));
-    track(0, 2); eject_during_read = 1; finish();
-    assert(reads == 1 && status[0] == ST_NONE && !slot_anlz(0));
+    /* Analysis belongs to the callback's cut, even after its arrays are reused. */
+    b.beats[64].time_s = 35;
+    b.hot[1].start_s = 2;
+    open_b_selector(0);
+    assert(sel_n == 4);
+    expect_ms(sel_cand[1].ms, 32000, b.rate);
+    open_b_selector(1);
+    assert(sel_n == 2);
+    expect_ms(sel_cand[0].ms, 0, b.rate);
+    expect_ms(sel_cand[1].ms, 80000, b.rate);
+    close_selector();
+    b.beats[64].time_s = 32;
+    b.hot[1].start_s = 0;
 
-    /* Metadata changing during a read is rejected even before the next UI load event. */
-    reset(); track(0, 3); replace_during_read = 1; finish();
-    assert(status[0] == ST_FAILED && !slot_anlz(0));
-    note_track_change(0, &live[0]); finish();
-    assert(status[0] == ST_OK);
+    /* Prepared loops change PLAY immediately while B is paused. */
+    loop_bounds(&b, 1, 16, 24);
+    publish(&b, AZ_STATUS_CHANGE, AZ_STATUS_TOPIC(AZ_STATUS_LOOP));
+    assert(plan.state == AN_ST_START && plan.loop_prepared && plan.loops == 2);
+    expect_ms(plan.action_wall_ms, fixture_ms + 7000, 1000);
+    loop_bounds(&b, 1, 16, 20);
+    publish(&b, AZ_STATUS_CHANGE, AZ_STATUS_TOPIC(AZ_STATUS_LOOP));
+    assert(plan.state == AN_ST_START && plan.loops == 4);
+    expect_ms(plan.action_wall_ms, fixture_ms + 3000, 1000);
+    FIELD(&b, loop, working_out, LOOP_WORKING_OUT, AZ_AVAIL_LOADING, 0);
+    publish(&b, AZ_STATUS_CHANGE, AZ_STATUS_TOPIC(AZ_STATUS_LOOP));
+    assert(plan.notice == AN_NOTICE_LOOP_UNKNOWN && !plan.action && !plan.play_now);
+    loop_bounds(&b, 1, 16, 20);
+    b.loop.working_out_info.scope_id = a.epoch;
+    publish(&b, AZ_STATUS_RESYNC, AZ_STATUS_TOPIC(AZ_STATUS_LOOP));
+    assert(!decks[1].loop.valid && !plan.action && !plan.play_now);
+    loop_bounds(&b, 1, 0, 4);
+    head(&b, 0);
+    publish(&b, AZ_STATUS_CHANGE, AZ_STATUS_TOPIC(AZ_STATUS_LOOP) | AZ_STATUS_TOPIC(AZ_STATUS_POSITION));
+    assert(decks[1].loop.valid);
+    expect_ms(decks[1].loop.in_ms, 0, b.rate);
+    expect_ms(plan.b_target_ms, 32000, b.rate);
 
-    /* Identical per-library ids/titles on two decks never share an analysis allocation. */
-    reset(); track(0, 1); sample[0] = 111; finish();
-    track(1, 1); sample[1] = 222; finish();
-    assert(reads == 2 && slot_anlz(0)->beats != slot_anlz(1)->beats);
-    assert(slot_anlz(0)->beats[0].time_ms == 111 && slot_anlz(1)->beats[0].time_ms == 222);
+    /* The final pass opens after the head reaches IN, with loop-out-to-target travel. */
+    head(&b, 16);
+    loop_bounds(&b, 1, 16, 20);
+    playback(&b, AZ_PLAYBACK_PLAYING);
+    latched_ms = 33000;
+    snprintf(latched_label, sizeof latched_label, "PICKED TARGET");
+    publish(&b, AZ_STATUS_CHANGE, AZ_STATUS_TOPIC(AZ_STATUS_TRANSPORT) | AZ_STATUS_TOPIC(AZ_STATUS_LOOP) |
+                                AZ_STATUS_TOPIC(AZ_STATUS_POSITION));
+    assert(plan.state == AN_ST_WAIT && plan.looping);
+    expect_ms(plan.out_wall_ms, fixture_ms + 20000, 1000);
+    fixture_ms += 16000;
+    head(&a, 17);
+    head(&b, 16);
+    publish(&a, AZ_STATUS_CHANGE, AZ_STATUS_TOPIC(AZ_STATUS_POSITION));
+    publish(&b, AZ_STATUS_CHANGE, AZ_STATUS_TOPIC(AZ_STATUS_POSITION));
+    assert(plan.state == AN_ST_OPEN && plan.window_open && plan.action == 2);
+    loop_bounds(&b, 0, 0, 0);
+    publish(&b, AZ_STATUS_CHANGE, AZ_STATUS_TOPIC(AZ_STATUS_LOOP));
+    assert(plan.state == AN_ST_RELEASED && cur_b == 1);
+    publish(&b, AZ_STATUS_RESYNC, AZ_STATUS_TOPIC(AZ_STATUS_LOOP));
+    assert(!decks[1].loop.released && cur_b == 1);
 
-    /* Artist-only identity changes are loads too (including title-only external sources). */
-    reset(); track(0, 0); finish();
-    snprintf(live[0].artist, sizeof live[0].artist, "Different Artist");
-    note_track_change(0, &live[0]); finish();
-    assert(reads == 2);
-
-    /* Hot cue mode must request cues on EVERY subsequent track load. */
-    reset(); settings_set(SET_RULE, AN_RULE_HOTCUE);
-    track(0, 1); finish();
-    track(0, 2); finish();
-    assert(reads == 2 && cue_reads == 2 && slot_anlz(0)->ncues == 1);
-    assert(slot_anlz(0)->cues[0].time_ms == 2000);
-    reset(); settings_set(SET_RULE, AN_RULE_HOTCUE);
-    track(0, 1); cue_failure = 1; finish();
-    assert(status[0] == ST_FAILED && !slot_anlz(0));
-    assert(strstr(fail_why[0], "cue analysis"));
-    reset(); track(0, 1); late_phrases = 1; finish();
-    assert(reads == 2 && cue_reads == 0 && slot_anlz(0)->has_phrases);
-    reset(); track(0, 1); transient_info = 2; transient_after_read = 2; finish();
-    assert(reads == 1 && status[0] == ST_OK && slot_anlz(0));
-    /* Native UI readiness is temporary. A deferred retry must not fail the track or
-     * monopolize the resolver while the other deck is already readable. */
-    reset(); track(0,1); early_state_attempts=3;
-    request_t early=next(); process_request(&early);
-    assert(status[0]==ST_PENDING && queued[0] && queue[0].retries==1);
-    assert(!take_request(&old));
-    track(1,2); request_t other=next(); assert(other.deck==1);
-    early_state_attempts=0; process_request(&other);
-    assert(status[1]==ST_OK && status[0]==ST_PENDING);
-    early_state_attempts=2;
-    for(int i=0;i<3;i++) {
-        queue[0].not_before_ms=0;
-        early=next(); process_request(&early);
-    }
-    assert(status[0]==ST_OK && slot_anlz(0)->has_phrases && !queued[0]);
-    reset(); track(0,1); early_state_attempts=1;
-    early=next(); process_request(&early); assert(queued[0]);
-    live[0].loaded=0; on_deck_event(0,AZ_DECK_EJECTED,NULL);
-    assert(!queued[0] && status[0]==ST_NONE);
-    /* A usable grid remains usable when optional cue lookup fails (e.g. a grid target). */
-    reset(); settings_set(SET_RULE, AN_RULE_GRID16);
-    track(0, 1); late_phrases = 5; cue_failure = 1; finish();
-    assert(status[0] == ST_OK && slot_anlz(0)->has_grid && !slot_anlz(0)->has_phrases);
-
-    /* A manually picked phrase overrides the default Hot cue rule on a cue-less track. */
-    reset(); track(0, 1); finish(); track(1, 2); finish();
-    an_target_opts_t opts = {.rule = AN_RULE_HOTCUE, .hotcue_any = 1};
-    latched_ms = 10000; latched_gen = deck_gen[0];
-    snprintf(latched_label, sizeof latched_label, "MANUAL PHRASE");
-    live[0].bpm = live[1].bpm = 120;
-    compute_plan(0, live, 0, 1, &opts);
-    assert(plan.state == AN_ST_SINGLE && plan.target_ms == 10000);
-
-    /* Rapid loads coalesce to the newest request instead of overflowing a stale FIFO. */
-    reset();
-    for (unsigned i = 1; i <= 100; i++) track(0, i);
-    request_t latest = next();
-    assert(latest.content_id == 100 && !take_request(&old));
-    process_request(&latest);
-    assert(reads == 1 && status[0] == ST_OK && slot_anlz(0)->beats[0].time_ms == 10000);
-
-    /* A replacement immediately clears old targets, picker, plan and loop detection. */
-    sel_open = layout_ok = plan.valid = rt[0].confirmed = 1;
-    sel_n = 1; latched_ms = 1000; strip_shown = 1;
-    on_deck_event(0, AZ_DECK_LOADED, NULL);
-    assert(!sel_open && !sel_n && !layout_ok && !latched_ms && !plan.valid && !rt[0].confirmed);
-    assert(!strip_shown && !slot_anlz(0));
-    sel_n = 1; sel_deck = 0; sel_gen = deck_gen[0] - 1;
-    sel_cand[0].ms = 1234;
+    /* Live cue edits replace open pickers. A confirmed empty bank hides saved cues. */
+    open_b_selector(1);
+    b.cues.saved_hot = b.hot;
+    FIELD(&b, cues, saved_hot, CUES_SAVED_HOT, AZ_AVAIL_READY, 2);
+    FIELD(&b, cues, live_hot, CUES_LIVE_HOT, AZ_AVAIL_EMPTY, 0);
+    publish(&b, AZ_STATUS_CHANGE, AZ_STATUS_TOPIC(AZ_STATUS_CUES));
+    assert(sel_open && !sel_n && !layout_ok && !sel_pending && b_targets[1].valid);
+    FIELD(&b, cues, live_hot, CUES_LIVE_HOT, AZ_AVAIL_READY, 2);
+    publish(&b, AZ_STATUS_RESYNC, AZ_STATUS_TOPIC(AZ_STATUS_CUES));
+    assert(sel_open && sel_n == 2);
     latch_candidate(0);
-    assert(!latched_ms);
-    reset();
-    puts("track lifecycle passed: fresh reload/refresh, canceled reads, metadata guards, cue reloads, queue coalescing and stale target cleanup");
-    return 0;
+    assert(b_targets[1].valid);
+    expect_ms(b_targets[1].target.ms, 0, b.rate);
+    head(&b, 3.217);
+    publish(&b, AZ_STATUS_CHANGE, AZ_STATUS_TOPIC(AZ_STATUS_POSITION));
+    assert(plan.notice == AN_NOTICE_B_TARGET_PASSED);
+    open_b_selector(0);
+    set_b_here();
+    expect_ms(b_targets[1].target.ms, 3217, b.rate);
+
+    /* A grid change cannot reuse a phrase association from the previous revision. */
+    a.beats[64].time_s = 32.25;
+    FIELD(&a, grid, current, GRID_CURRENT, AZ_AVAIL_READY, 257);
+    publish(&a, AZ_STATUS_CHANGE, AZ_STATUS_TOPIC(AZ_STATUS_GRID));
+    assert(!decks[0].analysis.nphrases && decks[0].phrases_pending);
+    link_phrases(&a);
+    publish(&a, AZ_STATUS_CHANGE, AZ_STATUS_TOPIC(AZ_STATUS_PHRASES));
+    assert(decks[0].analysis.nphrases == 4);
+    expect_ms(decks[0].analysis.phrases[0].end_ms, 32250, a.rate);
+
+    /* Identical track data under a new load clears the target, role and old hitboxes. */
+    open_b_selector(1);
+    loaded(&b, 1, 3, AZ_PLAYBACK_PLAYING, 4);
+    publish(&b, AZ_STATUS_CHANGE, watch.topics);
+    assert(!b_targets[1].valid && !sel_open && !layout_ok && cur_b < 0 && !strip_shown);
+    latch_candidate(0);
+    assert(!b_targets[1].valid);
+    playback(&b, AZ_PLAYBACK_PAUSED);
+    publish(&b, AZ_STATUS_CHANGE, AZ_STATUS_TOPIC(AZ_STATUS_TRANSPORT));
+    assert(strip_shown && cur_b == 1);
+    expect_ms(plan.b_target_ms, 32000, b.rate);
+
+    /* An already loaded track can lose its head or direction during recovery. */
+    FIELD(&a, position, head, POSITION_HEAD, AZ_AVAIL_STALE, 0);
+    publish(&a, AZ_STATUS_RESYNC, AZ_STATUS_TOPIC(AZ_STATUS_POSITION));
+    assert(plan.notice == AN_NOTICE_DECK_STATE && !plan.action);
+    head(&a, 1);
+    publish(&a, AZ_STATUS_CHANGE, AZ_STATUS_TOPIC(AZ_STATUS_POSITION));
+    assert(plan.action == 1);
+    b.tempo.current_bpm = 121;
+    publish(&b, AZ_STATUS_CHANGE, AZ_STATUS_TOPIC(AZ_STATUS_TEMPO));
+    assert(plan.tempo_mismatch);
+    b.tempo.current_bpm = 120;
+    publish(&b, AZ_STATUS_CHANGE, AZ_STATUS_TOPIC(AZ_STATUS_TEMPO));
+    assert(!plan.tempo_mismatch && plan.action == 1);
+    FIELD(&b, loop, engaged, LOOP_ENGAGED, AZ_AVAIL_UNSUPPORTED, 0);
+    publish(&b, AZ_STATUS_CHANGE, AZ_STATUS_TOPIC(AZ_STATUS_LOOP));
+    assert(plan.notice == AN_NOTICE_LOOP_UNAVAILABLE && !plan.action);
+    b.epoch = 0;
+    b.load.state = AZ_STATUS_LOAD_EMPTY;
+    publish(&b, AZ_STATUS_CHANGE, AZ_STATUS_TOPIC(AZ_STATUS_LOAD));
+    assert(!decks[1].loaded && !b_targets[1].valid && !strip_shown);
+
+    puts("Deck events passed: load epochs, prepared loops, EXIT timing, borrowed maps, cue edits and resync");
 }

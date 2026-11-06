@@ -124,7 +124,7 @@ int main(void)
     }
     for (int layout = 1; layout <= 3; layout++) {
         for (int state = AN_ST_NONE; state <= AN_ST_MISSED; state++) {
-            for (int notice = AN_NOTICE_NONE; notice <= AN_NOTICE_START_OUTGOING; notice++) {
+            for (int notice = AN_NOTICE_NONE; notice <= AN_NOTICE_CUES_UNAVAILABLE; notice++) {
                 p.state = state; p.notice = notice;
                 snprintf(p.line2, sizeof p.line2, "Long diagnostic message to verify it stays inside its own secondary text area");
                 for (int variant = 0; variant < 6; variant++) {

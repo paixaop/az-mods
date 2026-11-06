@@ -4,11 +4,7 @@
 **/__pycache__/
 **/*.pyc
 anchor/tests/test_anchor
-anchor/tests/test_b_target
 anchor/tests/test_display
 anchor/tests/test_lifecycle
-anchor/tests/test_loaded
-anchor/tests/test_resolve
-anchor/tests/test_runtime
 *.dSYM/
 .DS_Store

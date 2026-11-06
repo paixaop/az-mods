@@ -8,7 +8,8 @@ struct az_draw { int unused; };
 
 static az_rect bounds;
 static az_rect texts[256];
-static int ntexts, saved[SET_COUNT], redraws;
+static int ntexts, saved[SET_COUNT], redraws, setting_events;
+static void setting_changed(void) { setting_events++; }
 static int text_width(const char *s, int px) { return (int)(strlen(s) * px * .66 + .5); }
 static void rect_check(int x, int y, int w, int h)
 {
@@ -74,20 +75,19 @@ int main(void)
     az_core_v1 core = {.size=sizeof core,.draw_text=draw_string,.fill_rect=fill,.draw_rect=rect,
                       .color=color,.text_width=text_width,.cfg_get=get,.cfg_set=set,.request_redraw=redraw};
     for (int i = 0; i < SET_COUNT; i++) saved[i] = DESC[i].def;
-    settings_init(&core); settings_screen.on_enter(NULL);
+    settings_init(&core, setting_changed); settings_screen.on_enter(NULL);
     paint(1280,420);
     press_hit(HIT_SET,SET_DISPLAY,0); assert(settings_get(SET_DISPLAY) == 0);
+    assert(setting_events == 1);
     assert(nhits == 0); /* old hit regions cannot act after a layout change */
-    paint(1280,420); press_hit(HIT_SET,SET_DISPLAY,0); assert(settings_get(SET_DISPLAY) == 0);
+    paint(1280,420); press_hit(HIT_SET,SET_DISPLAY,0); assert(settings_get(SET_DISPLAY) == 0 && setting_events == 1);
     paint(1280,420); press_hit(HIT_SET,SET_DISPLAY,2);
-    settings_init(&core); assert(settings_get(SET_DISPLAY) == 2);
+    settings_init(&core, setting_changed); assert(settings_get(SET_DISPLAY) == 2);
     paint(1280,420); press_hit(HIT_CYCLE,SET_RULE,1); assert(settings_get(SET_RULE) == 1);
     paint(1280,420);
     for (int i = 0; i < nhits; i++) assert(hits[i].key != SET_PHRASE && hits[i].key != SET_POINT && hits[i].key != SET_HCSLOT);
     press_hit(HIT_CYCLE,SET_HCANY,1); paint(1280,420);
     press_hit(HIT_CYCLE,SET_HCSLOT,1); assert(settings_get(SET_HCSLOT) == 1);
-    paint(1280,420); press_hit(HIT_CYCLE,SET_REFRESH,1);
-    assert(settings_take_refresh()); assert(!settings_take_refresh());
     settings_set(SET_RULE,0); settings_screen.on_enter(NULL); paint(480,240);
     press_hit(HIT_TAB,-1,1); paint(480,240); assert(g_sel == SET_RULE);
     event(AZ_EV_KNOB,1); paint(480,240); assert(g_sel == SET_PHRASE);
@@ -98,8 +98,8 @@ int main(void)
         paint(480,240); seen |= 1u << g_sel; event(AZ_EV_KNOB,1);
     }
     assert((seen & ((1u << SET_SHOW)|(1u << SET_DISPLAY)|(1u << SET_RULE)|(1u << SET_PHRASE)|
-            (1u << SET_POINT)|(1u << SET_CONSOL)|(1u << SET_DECK)|(1u << SET_REFRESH))) == seen);
-    assert(seen & (1u << SET_REFRESH));
+            (1u << SET_POINT)|(1u << SET_CONSOL)|(1u << SET_DECK))) == seen);
+    assert(seen & (1u << SET_DECK));
     unsigned touched = 0;
     settings_screen.on_enter(NULL);
     for (int i = 0; i < 12; i++) {
@@ -120,7 +120,7 @@ int main(void)
             settings_screen.on_enter(NULL);
             for (int i = 0; i < SET_COUNT; i++) { paint(sizes[z][0],sizes[z][1]); if(nhits)event(AZ_EV_KNOB,1); }
         }
-    saved[SET_RULE]=999; settings_init(&core); assert(settings_get(SET_RULE)==0);
+    saved[SET_RULE]=999; settings_init(&core, setting_changed); assert(settings_get(SET_RULE)==0);
     assert(redraws > 0);
-    puts("Settings passed: touch bounds/overlap, conditional controls, paging, knob, persistence and refresh");
+    puts("Settings passed: touch bounds/overlap, conditional controls, paging, knob, persistence and setting events");
 }

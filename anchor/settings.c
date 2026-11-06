@@ -12,17 +12,18 @@
 #include <stdio.h>
 #include <string.h>
 
-const char *const SET_RULE_LABELS[4] = { "Phrase", "Hot cue", "16-bar grid", "32-bar grid" };
-const char *const SET_DISPLAY_LABELS[3] = { "Ribbon", "Card", "Sidebar" };
-const char *const SET_PHRASE_LABELS[8] = { "Any", "Intro", "Build", "Break",
-                                           "Chorus", "Outro", "Verse", "Bridge" };
-const char *const SET_POINT_LABELS[2] = { "Ending", "Start" };
-const char *const SET_HOTCUE_LABELS[8] = { "HC1", "HC2", "HC3", "HC4",
-                                            "HC5", "HC6", "HC7", "HC8" };
-const char *const SET_DECK_LABELS[3] = { "Auto", "Deck 1", "Deck 2" };
+static const char *const SET_RULE_LABELS[4] = { "Phrase", "Hot cue", "16-bar grid", "32-bar grid" };
+static const char *const SET_DISPLAY_LABELS[3] = { "Ribbon", "Card", "Sidebar" };
+static const char *const SET_PHRASE_LABELS[8] = { "Any", "Intro", "Build", "Break",
+                                                "Chorus", "Outro", "Verse", "Bridge" };
+static const char *const SET_POINT_LABELS[2] = { "Ending", "Start" };
+static const char *const SET_HOTCUE_LABELS[8] = { "HC1", "HC2", "HC3", "HC4",
+                                                "HC5", "HC6", "HC7", "HC8" };
+static const char *const SET_DECK_LABELS[3] = { "Auto", "Deck 1", "Deck 2" };
 
 static const az_core_v1 *C;
-static int refresh_flag;
+static void (*changed)(void);
+static const az_screen_v1 settings_screen;
 
 /* key, default, choices, labels */
 typedef struct {
@@ -41,14 +42,12 @@ static const set_desc DESC[SET_COUNT] = {
     { SET_CONSOL, 1, 0, NULL },
     { SET_HCANY, 1, 0, NULL },
     { SET_HCSLOT, 0, 8, SET_HOTCUE_LABELS },
-    { SET_LOOP, 0, 0, NULL }, /* legacy key ignored; detection is always automatic */
     { SET_DECK, 0, 3, SET_DECK_LABELS },
-    { SET_REFRESH, 1, 0, NULL },
 };
 
 static const char *const KEYS[SET_COUNT] = {
     "show", "display", "a-target", "a-phrase", "a-point", "a-consolidate",
-    "a-hotcue-any", "a-hotcue-slot", "b-loop", "b-deck", "refresh",
+    "a-hotcue-any", "a-hotcue-slot", "b-deck",
 };
 
 static const char *const ROW_LABELS[SET_COUNT] = {
@@ -60,34 +59,32 @@ static const char *const ROW_LABELS[SET_COUNT] = {
     "Consolidate phrases",
     "Any hot cue",
     "Default hot cue",
-    "B loop",
     "Incoming deck",
-    "Refresh analysis",
 };
 
 static int values[SET_COUNT];
 static int loaded_cfg;
 
-void settings_init(const az_core_v1 *core)
+const az_screen_v1 *settings_init(const az_core_v1 *core, void (*on_change)(void))
 {
     C = core;
+    changed = on_change;
     for (int i = 0; i < SET_COUNT; i++)
         values[i] = C && AZ_HAS(C, cfg_get) ? C->cfg_get(ANCHOR_MOD_ID, KEYS[i], DESC[i].def)
                                             : DESC[i].def;
     for (int i = 0; i < SET_COUNT; i++)
         if (values[i] < 0 || values[i] >= (DESC[i].n ? DESC[i].n : 2)) values[i] = DESC[i].def;
     loaded_cfg = 1;
+    return &settings_screen;
 }
 int settings_get(int key)
 {
-    if (key == SET_LOOP) return 0;
     if (!loaded_cfg) return 0;
     if (key < 0 || key >= SET_COUNT) return 0;
     return values[key];
 }
 void settings_set(int key, int value)
 {
-    if (key == SET_LOOP) return;
     if (key < 0 || key >= SET_COUNT) return;
     int v = value;
     if (DESC[key].n > 0) {
@@ -96,15 +93,10 @@ void settings_set(int key, int value)
     } else {
         v = v ? 1 : 0;
     }
+    if (values[key] == v) return;
     values[key] = v;
     if (C && AZ_HAS(C, cfg_set)) C->cfg_set(ANCHOR_MOD_ID, KEYS[key], v);
-    if (key == SET_REFRESH) refresh_flag = 1;
-}
-int settings_take_refresh(void)
-{
-    int v = refresh_flag;
-    refresh_flag = 0;
-    return v;
+    if (changed) changed();
 }
 
 /* ------------------------------------------------------------------------------------------
@@ -165,7 +157,6 @@ static hit_t hits[64];
 static int nhits, g_sel = SET_SHOW, g_tab, g_first, g_visible, g_wide;
 static int focus_keys[SET_COUNT], nfocus;
 static az_rect g_area;
-static int refreshed;
 
 static uint32_t mix(uint32_t a, uint32_t b, unsigned pct)
 {
@@ -200,7 +191,6 @@ static void rebuild_focus(void)
         if (!settings_get(SET_HCANY)) focus_keys[nfocus++] = SET_HCSLOT;
     }
     focus_keys[nfocus++] = SET_DECK;
-    focus_keys[nfocus++] = SET_REFRESH;
     int found = 0;
     for (int i = 0; i < nfocus; i++) found |= focus_keys[i] == g_sel;
     if (!found) g_sel = SET_RULE;
@@ -230,7 +220,6 @@ static void button(az_draw *d, az_rect r, const char *label, int key,
 static const char *value_label(int key)
 {
     if (key < 0 || key >= SET_COUNT) return "";
-    if (key == SET_REFRESH) return refreshed ? "Read requested" : "Refresh analysis";
     if (!DESC[key].n) return settings_get(key) ? "ON" : "OFF";
     int v = settings_get(key);
     return DESC[key].labels[v >= 0 && v < DESC[key].n ? v : 0];
@@ -241,15 +230,13 @@ static const char *label_for(int key)
     case SET_RULE: return "Target type";
     case SET_CONSOL: return "Join matching phrases";
     case SET_HCANY: return "Use any hot cue";
-    case SET_LOOP: return "Incoming loop";
     default: return ROW_LABELS[key];
     }
 }
 static void value_control(az_draw *d, az_rect r, int key, int px)
 {
     if (!DESC[key].n) {
-        button(d, r, value_label(key), key, HIT_CYCLE, 1,
-               key != SET_REFRESH && settings_get(key), px);
+        button(d, r, value_label(key), key, HIT_CYCLE, 1, settings_get(key), px);
         return;
     }
     /* 44px arrows work with gloves or an imprecise tap. The value also cycles forward. */
@@ -263,8 +250,8 @@ static void value_control(az_draw *d, az_rect r, int key, int px)
 static void setting_row(az_draw *d, az_rect r, int key, int px)
 {
     int vw = r.w * 55 / 100;
-    if (!DESC[key].n) vw = key == SET_REFRESH ? r.w : 76;
-    if (key != SET_REFRESH) text(d, (az_rect){r.x, r.y, r.w - vw - 12, r.h}, label_for(key), px, ink());
+    if (!DESC[key].n) vw = 76;
+    text(d, (az_rect){r.x, r.y, r.w - vw - 12, r.h}, label_for(key), px, ink());
     value_control(d, (az_rect){r.x + r.w - vw, r.y, vw, r.h}, key, px);
 }
 static void stacked_field(az_draw *d, az_rect r, int key)
@@ -330,22 +317,14 @@ static void sample_preview(az_draw *d, az_rect r)
                               "TARGET / PHRASE END", 11, dim());
     }
 }
-static void footer(az_draw *d, az_rect r, int wide)
+static void page_controls(az_draw *d, az_rect r)
 {
-    if (wide) {
-        int bw = 210;
-        button(d, (az_rect){r.x + r.w - bw, r.y, bw, r.h}, value_label(SET_REFRESH),
-               SET_REFRESH, HIT_CYCLE, 1, 0, 14);
-        text(d, (az_rect){r.x, r.y, r.w - bw - 16, r.h},
-             "Saved automatically. Use physical PLAY / loop EXIT.", 13, dim());
-    } else {
-        int bw = 60;
-        button(d, (az_rect){r.x, r.y, bw, r.h}, "<", -1, HIT_PAGE, -1, 0, 16);
-        char label[80];
-        snprintf(label, sizeof label, "%s / turn knob for more", g_tab == 0 ? "Guide" : g_tab == 1 ? "Targets" : "Incoming");
-        text(d, (az_rect){r.x + bw + 8, r.y, r.w - 2 * bw - 16, r.h}, label, 11, dim());
-        button(d, (az_rect){r.x + r.w - bw, r.y, bw, r.h}, ">", -1, HIT_PAGE, 1, 0, 16);
-    }
+    int bw = 60;
+    button(d, (az_rect){r.x, r.y, bw, r.h}, "<", -1, HIT_PAGE, -1, 0, 16);
+    char label[80];
+    snprintf(label, sizeof label, "%s / turn knob for more", g_tab == 0 ? "Guide" : g_tab == 1 ? "Targets" : "Incoming");
+    text(d, (az_rect){r.x + bw + 8, r.y, r.w - 2 * bw - 16, r.h}, label, 11, dim());
+    button(d, (az_rect){r.x + r.w - bw, r.y, bw, r.h}, ">", -1, HIT_PAGE, 1, 0, 16);
 }
 static void draw_wide(az_draw *d, az_rect a)
 {
@@ -379,9 +358,9 @@ static void draw_wide(az_draw *d, az_rect a)
     x = body.x + colw + gap;
     stacked_field(d, (az_rect){x, y, colw, rowh + 24}, SET_DECK);
     text(d, (az_rect){x, y + rowh + 38, colw, 24}, "LOOP / AUTOMATIC", 14, ink());
-    text(d, (az_rect){x, y + rowh + 64, colw, 22}, "Loop size is detected; no fixed length is assumed.", 12, dim());
-    text(d, (az_rect){x, y + rowh + 88, colw, 22}, "If DETECTING LOOP appears, let B repeat.", 12, dim());
-    footer(d, (az_rect){body.x, body.y + body.h - 44, body.w, 44}, 1);
+    text(d, (az_rect){x, y + rowh + 64, colw, 22}, "Anchor follows B's working loop, including while paused.", 12, dim());
+    text(d, (az_rect){body.x, body.y + body.h - 44, body.w, 44},
+         "Saved automatically. Use physical PLAY / loop EXIT.", 13, dim());
 }
 static void draw_compact(az_draw *d, az_rect a)
 {
@@ -414,7 +393,7 @@ static void draw_compact(az_draw *d, az_rect a)
         for (int i = 0; i < g_visible; i++)
             setting_row(d, (az_rect){body.x, y + i * 52, body.w, 44}, group[g_first + i], 14);
     }
-    footer(d, (az_rect){body.x, body.y + body.h - 44, body.w, 44}, 0);
+    page_controls(d, (az_rect){body.x, body.y + body.h - 44, body.w, 44});
 }
 static void draw_cb(az_draw *d, az_rect a, void *user)
 {
@@ -430,8 +409,7 @@ static void draw_cb(az_draw *d, az_rect a, void *user)
 }
 static void change(int key, int delta)
 {
-    if (key == SET_REFRESH) { settings_set(key, 1); refreshed = 1; }
-    else if (!DESC[key].n) settings_set(key, !settings_get(key));
+    if (!DESC[key].n) settings_set(key, !settings_get(key));
     else settings_set(key, settings_get(key) + delta);
 }
 static void move_focus(int dir)
@@ -495,10 +473,10 @@ static int input_cb(const az_event *ev, void *user)
 static void enter_cb(void *user)
 {
     (void)user;
-    g_sel = SET_SHOW; g_tab = g_first = nhits = refreshed = 0;
+    g_sel = SET_SHOW; g_tab = g_first = nhits = 0;
     g_area = (az_rect){0};
 }
-const az_screen_v1 settings_screen = {
+static const az_screen_v1 settings_screen = {
     .size = sizeof(az_screen_v1),
     .on_draw = draw_cb,
     .on_input = input_cb,
