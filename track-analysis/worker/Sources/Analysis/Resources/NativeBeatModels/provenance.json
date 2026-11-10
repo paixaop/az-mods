@@ -1,0 +1,21 @@
+{
+  "revision": "7e3dc1b0cad499792767074d03c38b194b9b0a79",
+  "license": "CC-BY-NC-SA-4.0",
+  "models": [
+    {
+      "number": 7,
+      "source": "https://raw.githubusercontent.com/CPJKU/madmom_models/7e3dc1b0cad499792767074d03c38b194b9b0a79/downbeats/2016/downbeats_blstm_7.pkl",
+      "sourceSHA256": "371a319a66d32bee6ab8d4a15f6ae9e4ee22ff97b4276736bab93d9a994c06c1",
+      "resource": "model7.plist",
+      "resourceSHA256": "5fd7635124de8b1d3827b00a877b6a42fe4a223c5d3c82fe7fbd9372d9e28c7a"
+    },
+    {
+      "number": 8,
+      "source": "https://raw.githubusercontent.com/CPJKU/madmom_models/7e3dc1b0cad499792767074d03c38b194b9b0a79/downbeats/2016/downbeats_blstm_8.pkl",
+      "sourceSHA256": "a0d20e1922872a3e5b74df451d8b5701de6ca88d9f5739f313fb2991d7a84c77",
+      "resource": "model8.plist",
+      "resourceSHA256": "4c22285fb46b8af4e896beb4bf92d93fa1ab2e105ecc4a09079e51127ff02935"
+    }
+  ],
+  "filterbanksSHA256": "529ee4b98163510c6af24a91d93c74dff7f99cf75c66da193f334279f779305e"
+}

@@ -1,0 +1,1001 @@
+{
+  "sourceSHA256": "2dfa9738b50e6c5ab3a6ca556dd7967c31ae4a6b06b52d0925f61fad8046f907",
+  "recipe": "AudioAnalyzerTests.clicks",
+  "sourceSampleRate": 22050,
+  "duration": 22,
+  "offset": 0.37,
+  "noiseSeed": 42,
+  "modelVariant": 8,
+  "rhythmMode": "normal",
+  "cases": [
+    {
+      "inputBPM": 120,
+      "normalizedFrames": 970264,
+      "normalizedPCMSHA256": "96b690cd240dd1ca6ac0498784eb0c199399d98d46dde08aae0f4d014688608d",
+      "modelInputSHA256": "4f98a06ce5ded48343c419067fad3ced6672d8a96bf8b5980a39fcb3f8801fbc",
+      "expected": {
+        "beats": [
+          {
+            "beatInBar": 2,
+            "bpm100": 12000,
+            "milliseconds": 370,
+            "microsecondRemainder": 340
+          },
+          {
+            "beatInBar": 3,
+            "bpm100": 12000,
+            "milliseconds": 870,
+            "microsecondRemainder": 340
+          },
+          {
+            "beatInBar": 4,
+            "bpm100": 12000,
+            "milliseconds": 1370,
+            "microsecondRemainder": 340
+          },
+          {
+            "beatInBar": 1,
+            "bpm100": 12000,
+            "milliseconds": 1870,
+            "microsecondRemainder": 340
+          },
+          {
+            "beatInBar": 2,
+            "bpm100": 12000,
+            "milliseconds": 2370,
+            "microsecondRemainder": 340
+          },
+          {
+            "beatInBar": 3,
+            "bpm100": 12000,
+            "milliseconds": 2870,
+            "microsecondRemainder": 340
+          },
+          {
+            "beatInBar": 4,
+            "bpm100": 12000,
+            "milliseconds": 3370,
+            "microsecondRemainder": 340
+          },
+          {
+            "beatInBar": 1,
+            "bpm100": 12000,
+            "milliseconds": 3870,
+            "microsecondRemainder": 340
+          },
+          {
+            "beatInBar": 2,
+            "bpm100": 12000,
+            "milliseconds": 4370,
+            "microsecondRemainder": 340
+          },
+          {
+            "beatInBar": 3,
+            "bpm100": 12000,
+            "milliseconds": 4870,
+            "microsecondRemainder": 340
+          },
+          {
+            "beatInBar": 4,
+            "bpm100": 12000,
+            "milliseconds": 5370,
+            "microsecondRemainder": 340
+          },
+          {
+            "beatInBar": 1,
+            "bpm100": 12000,
+            "milliseconds": 5870,
+            "microsecondRemainder": 340
+          },
+          {
+            "beatInBar": 2,
+            "bpm100": 12000,
+            "milliseconds": 6370,
+            "microsecondRemainder": 340
+          },
+          {
+            "beatInBar": 3,
+            "bpm100": 12000,
+            "milliseconds": 6870,
+            "microsecondRemainder": 340
+          },
+          {
+            "beatInBar": 4,
+            "bpm100": 12000,
+            "milliseconds": 7370,
+            "microsecondRemainder": 340
+          },
+          {
+            "beatInBar": 1,
+            "bpm100": 12000,
+            "milliseconds": 7870,
+            "microsecondRemainder": 340
+          },
+          {
+            "beatInBar": 2,
+            "bpm100": 12000,
+            "milliseconds": 8370,
+            "microsecondRemainder": 340
+          },
+          {
+            "beatInBar": 3,
+            "bpm100": 12000,
+            "milliseconds": 8870,
+            "microsecondRemainder": 340
+          },
+          {
+            "beatInBar": 4,
+            "bpm100": 12000,
+            "milliseconds": 9370,
+            "microsecondRemainder": 340
+          },
+          {
+            "beatInBar": 1,
+            "bpm100": 12000,
+            "milliseconds": 9870,
+            "microsecondRemainder": 340
+          },
+          {
+            "beatInBar": 2,
+            "bpm100": 12000,
+            "milliseconds": 10370,
+            "microsecondRemainder": 340
+          },
+          {
+            "beatInBar": 3,
+            "bpm100": 12000,
+            "milliseconds": 10870,
+            "microsecondRemainder": 340
+          },
+          {
+            "beatInBar": 4,
+            "bpm100": 12000,
+            "milliseconds": 11370,
+            "microsecondRemainder": 340
+          },
+          {
+            "beatInBar": 1,
+            "bpm100": 12000,
+            "milliseconds": 11870,
+            "microsecondRemainder": 340
+          },
+          {
+            "beatInBar": 2,
+            "bpm100": 12000,
+            "milliseconds": 12370,
+            "microsecondRemainder": 340
+          },
+          {
+            "beatInBar": 3,
+            "bpm100": 12000,
+            "milliseconds": 12870,
+            "microsecondRemainder": 340
+          },
+          {
+            "beatInBar": 4,
+            "bpm100": 12000,
+            "milliseconds": 13370,
+            "microsecondRemainder": 340
+          },
+          {
+            "beatInBar": 1,
+            "bpm100": 12000,
+            "milliseconds": 13870,
+            "microsecondRemainder": 340
+          },
+          {
+            "beatInBar": 2,
+            "bpm100": 12000,
+            "milliseconds": 14370,
+            "microsecondRemainder": 340
+          },
+          {
+            "beatInBar": 3,
+            "bpm100": 12000,
+            "milliseconds": 14870,
+            "microsecondRemainder": 340
+          },
+          {
+            "beatInBar": 4,
+            "bpm100": 12000,
+            "milliseconds": 15370,
+            "microsecondRemainder": 340
+          },
+          {
+            "beatInBar": 1,
+            "bpm100": 12000,
+            "milliseconds": 15870,
+            "microsecondRemainder": 340
+          },
+          {
+            "beatInBar": 2,
+            "bpm100": 12000,
+            "milliseconds": 16370,
+            "microsecondRemainder": 340
+          },
+          {
+            "beatInBar": 3,
+            "bpm100": 12000,
+            "milliseconds": 16870,
+            "microsecondRemainder": 340
+          },
+          {
+            "beatInBar": 4,
+            "bpm100": 12000,
+            "milliseconds": 17370,
+            "microsecondRemainder": 340
+          },
+          {
+            "beatInBar": 1,
+            "bpm100": 12000,
+            "milliseconds": 17870,
+            "microsecondRemainder": 340
+          },
+          {
+            "beatInBar": 2,
+            "bpm100": 12000,
+            "milliseconds": 18370,
+            "microsecondRemainder": 340
+          },
+          {
+            "beatInBar": 3,
+            "bpm100": 12000,
+            "milliseconds": 18870,
+            "microsecondRemainder": 340
+          },
+          {
+            "beatInBar": 4,
+            "bpm100": 12000,
+            "milliseconds": 19370,
+            "microsecondRemainder": 340
+          },
+          {
+            "beatInBar": 1,
+            "bpm100": 12000,
+            "milliseconds": 19870,
+            "microsecondRemainder": 340
+          },
+          {
+            "beatInBar": 2,
+            "bpm100": 12000,
+            "milliseconds": 20370,
+            "microsecondRemainder": 340
+          },
+          {
+            "beatInBar": 3,
+            "bpm100": 12000,
+            "milliseconds": 20870,
+            "microsecondRemainder": 340
+          },
+          {
+            "beatInBar": 4,
+            "bpm100": 12000,
+            "milliseconds": 21370,
+            "microsecondRemainder": 340
+          },
+          {
+            "beatInBar": 1,
+            "bpm100": 12000,
+            "milliseconds": 21870,
+            "microsecondRemainder": 340
+          }
+        ],
+        "globalBPM100": 12000,
+        "firstBeat": {
+          "offsetMilliseconds": 370,
+          "phase": 4
+        }
+      }
+    },
+    {
+      "inputBPM": 128,
+      "normalizedFrames": 970264,
+      "normalizedPCMSHA256": "64b384c4e4b05cef53d9c526a8664398d46c624e3f5d032cb9b1be26dfd8ea68",
+      "modelInputSHA256": "c92827ad01178548d86d9d9af34d26e7d527fd6493a6ad483844552ba977ce29",
+      "expected": {
+        "beats": [
+          {
+            "beatInBar": 1,
+            "bpm100": 12800,
+            "milliseconds": 370,
+            "microsecondRemainder": 317
+          },
+          {
+            "beatInBar": 2,
+            "bpm100": 12800,
+            "milliseconds": 839,
+            "microsecondRemainder": 70
+          },
+          {
+            "beatInBar": 3,
+            "bpm100": 12800,
+            "milliseconds": 1307,
+            "microsecondRemainder": 823
+          },
+          {
+            "beatInBar": 4,
+            "bpm100": 12800,
+            "milliseconds": 1776,
+            "microsecondRemainder": 553
+          },
+          {
+            "beatInBar": 1,
+            "bpm100": 12800,
+            "milliseconds": 2245,
+            "microsecondRemainder": 306
+          },
+          {
+            "beatInBar": 2,
+            "bpm100": 12800,
+            "milliseconds": 2714,
+            "microsecondRemainder": 58
+          },
+          {
+            "beatInBar": 3,
+            "bpm100": 12800,
+            "milliseconds": 3182,
+            "microsecondRemainder": 811
+          },
+          {
+            "beatInBar": 4,
+            "bpm100": 12800,
+            "milliseconds": 3651,
+            "microsecondRemainder": 564
+          },
+          {
+            "beatInBar": 1,
+            "bpm100": 12800,
+            "milliseconds": 4120,
+            "microsecondRemainder": 317
+          },
+          {
+            "beatInBar": 2,
+            "bpm100": 12800,
+            "milliseconds": 4589,
+            "microsecondRemainder": 70
+          },
+          {
+            "beatInBar": 3,
+            "bpm100": 12800,
+            "milliseconds": 5057,
+            "microsecondRemainder": 823
+          },
+          {
+            "beatInBar": 4,
+            "bpm100": 12800,
+            "milliseconds": 5526,
+            "microsecondRemainder": 553
+          },
+          {
+            "beatInBar": 1,
+            "bpm100": 12800,
+            "milliseconds": 5995,
+            "microsecondRemainder": 306
+          },
+          {
+            "beatInBar": 2,
+            "bpm100": 12800,
+            "milliseconds": 6464,
+            "microsecondRemainder": 58
+          },
+          {
+            "beatInBar": 3,
+            "bpm100": 12800,
+            "milliseconds": 6932,
+            "microsecondRemainder": 811
+          },
+          {
+            "beatInBar": 4,
+            "bpm100": 12800,
+            "milliseconds": 7401,
+            "microsecondRemainder": 564
+          },
+          {
+            "beatInBar": 1,
+            "bpm100": 12800,
+            "milliseconds": 7870,
+            "microsecondRemainder": 317
+          },
+          {
+            "beatInBar": 2,
+            "bpm100": 12800,
+            "milliseconds": 8339,
+            "microsecondRemainder": 70
+          },
+          {
+            "beatInBar": 3,
+            "bpm100": 12800,
+            "milliseconds": 8807,
+            "microsecondRemainder": 823
+          },
+          {
+            "beatInBar": 4,
+            "bpm100": 12800,
+            "milliseconds": 9276,
+            "microsecondRemainder": 553
+          },
+          {
+            "beatInBar": 1,
+            "bpm100": 12800,
+            "milliseconds": 9745,
+            "microsecondRemainder": 306
+          },
+          {
+            "beatInBar": 2,
+            "bpm100": 12800,
+            "milliseconds": 10214,
+            "microsecondRemainder": 58
+          },
+          {
+            "beatInBar": 3,
+            "bpm100": 12800,
+            "milliseconds": 10682,
+            "microsecondRemainder": 811
+          },
+          {
+            "beatInBar": 4,
+            "bpm100": 12800,
+            "milliseconds": 11151,
+            "microsecondRemainder": 564
+          },
+          {
+            "beatInBar": 1,
+            "bpm100": 12800,
+            "milliseconds": 11620,
+            "microsecondRemainder": 317
+          },
+          {
+            "beatInBar": 2,
+            "bpm100": 12800,
+            "milliseconds": 12089,
+            "microsecondRemainder": 70
+          },
+          {
+            "beatInBar": 3,
+            "bpm100": 12800,
+            "milliseconds": 12557,
+            "microsecondRemainder": 823
+          },
+          {
+            "beatInBar": 4,
+            "bpm100": 12800,
+            "milliseconds": 13026,
+            "microsecondRemainder": 553
+          },
+          {
+            "beatInBar": 1,
+            "bpm100": 12800,
+            "milliseconds": 13495,
+            "microsecondRemainder": 306
+          },
+          {
+            "beatInBar": 2,
+            "bpm100": 12800,
+            "milliseconds": 13964,
+            "microsecondRemainder": 58
+          },
+          {
+            "beatInBar": 3,
+            "bpm100": 12800,
+            "milliseconds": 14432,
+            "microsecondRemainder": 811
+          },
+          {
+            "beatInBar": 4,
+            "bpm100": 12800,
+            "milliseconds": 14901,
+            "microsecondRemainder": 564
+          },
+          {
+            "beatInBar": 1,
+            "bpm100": 12800,
+            "milliseconds": 15370,
+            "microsecondRemainder": 317
+          },
+          {
+            "beatInBar": 2,
+            "bpm100": 12800,
+            "milliseconds": 15839,
+            "microsecondRemainder": 70
+          },
+          {
+            "beatInBar": 3,
+            "bpm100": 12800,
+            "milliseconds": 16307,
+            "microsecondRemainder": 823
+          },
+          {
+            "beatInBar": 4,
+            "bpm100": 12800,
+            "milliseconds": 16776,
+            "microsecondRemainder": 553
+          },
+          {
+            "beatInBar": 1,
+            "bpm100": 12800,
+            "milliseconds": 17245,
+            "microsecondRemainder": 306
+          },
+          {
+            "beatInBar": 2,
+            "bpm100": 12800,
+            "milliseconds": 17714,
+            "microsecondRemainder": 58
+          },
+          {
+            "beatInBar": 3,
+            "bpm100": 12800,
+            "milliseconds": 18182,
+            "microsecondRemainder": 811
+          },
+          {
+            "beatInBar": 4,
+            "bpm100": 12800,
+            "milliseconds": 18651,
+            "microsecondRemainder": 564
+          },
+          {
+            "beatInBar": 1,
+            "bpm100": 12800,
+            "milliseconds": 19120,
+            "microsecondRemainder": 317
+          },
+          {
+            "beatInBar": 2,
+            "bpm100": 12800,
+            "milliseconds": 19589,
+            "microsecondRemainder": 70
+          },
+          {
+            "beatInBar": 3,
+            "bpm100": 12800,
+            "milliseconds": 20057,
+            "microsecondRemainder": 823
+          },
+          {
+            "beatInBar": 4,
+            "bpm100": 12800,
+            "milliseconds": 20526,
+            "microsecondRemainder": 553
+          },
+          {
+            "beatInBar": 1,
+            "bpm100": 12800,
+            "milliseconds": 20995,
+            "microsecondRemainder": 306
+          },
+          {
+            "beatInBar": 2,
+            "bpm100": 12800,
+            "milliseconds": 21464,
+            "microsecondRemainder": 58
+          },
+          {
+            "beatInBar": 3,
+            "bpm100": 12800,
+            "milliseconds": 21932,
+            "microsecondRemainder": 811
+          }
+        ],
+        "globalBPM100": 12800,
+        "firstBeat": {
+          "offsetMilliseconds": 370,
+          "phase": 1
+        }
+      }
+    },
+    {
+      "inputBPM": 174,
+      "normalizedFrames": 970264,
+      "normalizedPCMSHA256": "e904fd6e16904968b0943c8060da8230b6e16480da985f4ca9078b810e6c5d3f",
+      "modelInputSHA256": "e1880069b4bcdff57bf95c7afded92e83656ff27ea996088a234de3958a35c96",
+      "expected": {
+        "beats": [
+          {
+            "beatInBar": 2,
+            "bpm100": 17400,
+            "milliseconds": 25,
+            "microsecondRemainder": 532
+          },
+          {
+            "beatInBar": 3,
+            "bpm100": 17400,
+            "milliseconds": 370,
+            "microsecondRemainder": 362
+          },
+          {
+            "beatInBar": 4,
+            "bpm100": 17400,
+            "milliseconds": 715,
+            "microsecondRemainder": 170
+          },
+          {
+            "beatInBar": 1,
+            "bpm100": 17400,
+            "milliseconds": 1060,
+            "microsecondRemainder": 0
+          },
+          {
+            "beatInBar": 2,
+            "bpm100": 17400,
+            "milliseconds": 1404,
+            "microsecondRemainder": 829
+          },
+          {
+            "beatInBar": 3,
+            "bpm100": 17400,
+            "milliseconds": 1749,
+            "microsecondRemainder": 659
+          },
+          {
+            "beatInBar": 4,
+            "bpm100": 17400,
+            "milliseconds": 2094,
+            "microsecondRemainder": 489
+          },
+          {
+            "beatInBar": 1,
+            "bpm100": 17400,
+            "milliseconds": 2439,
+            "microsecondRemainder": 319
+          },
+          {
+            "beatInBar": 2,
+            "bpm100": 17400,
+            "milliseconds": 2784,
+            "microsecondRemainder": 149
+          },
+          {
+            "beatInBar": 3,
+            "bpm100": 17400,
+            "milliseconds": 3128,
+            "microsecondRemainder": 979
+          },
+          {
+            "beatInBar": 4,
+            "bpm100": 17400,
+            "milliseconds": 3473,
+            "microsecondRemainder": 809
+          },
+          {
+            "beatInBar": 1,
+            "bpm100": 17400,
+            "milliseconds": 3818,
+            "microsecondRemainder": 616
+          },
+          {
+            "beatInBar": 2,
+            "bpm100": 17400,
+            "milliseconds": 4163,
+            "microsecondRemainder": 446
+          },
+          {
+            "beatInBar": 3,
+            "bpm100": 17400,
+            "milliseconds": 4508,
+            "microsecondRemainder": 276
+          },
+          {
+            "beatInBar": 4,
+            "bpm100": 17400,
+            "milliseconds": 4853,
+            "microsecondRemainder": 106
+          },
+          {
+            "beatInBar": 1,
+            "bpm100": 17400,
+            "milliseconds": 5197,
+            "microsecondRemainder": 936
+          },
+          {
+            "beatInBar": 2,
+            "bpm100": 17400,
+            "milliseconds": 5542,
+            "microsecondRemainder": 766
+          },
+          {
+            "beatInBar": 3,
+            "bpm100": 17400,
+            "milliseconds": 5887,
+            "microsecondRemainder": 596
+          },
+          {
+            "beatInBar": 4,
+            "bpm100": 17400,
+            "milliseconds": 6232,
+            "microsecondRemainder": 426
+          },
+          {
+            "beatInBar": 1,
+            "bpm100": 17400,
+            "milliseconds": 6577,
+            "microsecondRemainder": 256
+          },
+          {
+            "beatInBar": 2,
+            "bpm100": 17400,
+            "milliseconds": 6922,
+            "microsecondRemainder": 86
+          },
+          {
+            "beatInBar": 3,
+            "bpm100": 17400,
+            "milliseconds": 7266,
+            "microsecondRemainder": 893
+          },
+          {
+            "beatInBar": 4,
+            "bpm100": 17400,
+            "milliseconds": 7611,
+            "microsecondRemainder": 723
+          },
+          {
+            "beatInBar": 1,
+            "bpm100": 17400,
+            "milliseconds": 7956,
+            "microsecondRemainder": 553
+          },
+          {
+            "beatInBar": 2,
+            "bpm100": 17400,
+            "milliseconds": 8301,
+            "microsecondRemainder": 383
+          },
+          {
+            "beatInBar": 3,
+            "bpm100": 17400,
+            "milliseconds": 8646,
+            "microsecondRemainder": 213
+          },
+          {
+            "beatInBar": 4,
+            "bpm100": 17400,
+            "milliseconds": 8991,
+            "microsecondRemainder": 43
+          },
+          {
+            "beatInBar": 1,
+            "bpm100": 17400,
+            "milliseconds": 9335,
+            "microsecondRemainder": 873
+          },
+          {
+            "beatInBar": 2,
+            "bpm100": 17400,
+            "milliseconds": 9680,
+            "microsecondRemainder": 702
+          },
+          {
+            "beatInBar": 3,
+            "bpm100": 17400,
+            "milliseconds": 10025,
+            "microsecondRemainder": 532
+          },
+          {
+            "beatInBar": 4,
+            "bpm100": 17400,
+            "milliseconds": 10370,
+            "microsecondRemainder": 362
+          },
+          {
+            "beatInBar": 1,
+            "bpm100": 17400,
+            "milliseconds": 10715,
+            "microsecondRemainder": 170
+          },
+          {
+            "beatInBar": 2,
+            "bpm100": 17400,
+            "milliseconds": 11060,
+            "microsecondRemainder": 0
+          },
+          {
+            "beatInBar": 3,
+            "bpm100": 17400,
+            "milliseconds": 11404,
+            "microsecondRemainder": 829
+          },
+          {
+            "beatInBar": 4,
+            "bpm100": 17400,
+            "milliseconds": 11749,
+            "microsecondRemainder": 659
+          },
+          {
+            "beatInBar": 1,
+            "bpm100": 17400,
+            "milliseconds": 12094,
+            "microsecondRemainder": 489
+          },
+          {
+            "beatInBar": 2,
+            "bpm100": 17400,
+            "milliseconds": 12439,
+            "microsecondRemainder": 319
+          },
+          {
+            "beatInBar": 3,
+            "bpm100": 17400,
+            "milliseconds": 12784,
+            "microsecondRemainder": 149
+          },
+          {
+            "beatInBar": 4,
+            "bpm100": 17400,
+            "milliseconds": 13128,
+            "microsecondRemainder": 979
+          },
+          {
+            "beatInBar": 1,
+            "bpm100": 17400,
+            "milliseconds": 13473,
+            "microsecondRemainder": 809
+          },
+          {
+            "beatInBar": 2,
+            "bpm100": 17400,
+            "milliseconds": 13818,
+            "microsecondRemainder": 616
+          },
+          {
+            "beatInBar": 3,
+            "bpm100": 17400,
+            "milliseconds": 14163,
+            "microsecondRemainder": 446
+          },
+          {
+            "beatInBar": 4,
+            "bpm100": 17400,
+            "milliseconds": 14508,
+            "microsecondRemainder": 276
+          },
+          {
+            "beatInBar": 1,
+            "bpm100": 17400,
+            "milliseconds": 14853,
+            "microsecondRemainder": 106
+          },
+          {
+            "beatInBar": 2,
+            "bpm100": 17400,
+            "milliseconds": 15197,
+            "microsecondRemainder": 936
+          },
+          {
+            "beatInBar": 3,
+            "bpm100": 17400,
+            "milliseconds": 15542,
+            "microsecondRemainder": 766
+          },
+          {
+            "beatInBar": 4,
+            "bpm100": 17400,
+            "milliseconds": 15887,
+            "microsecondRemainder": 596
+          },
+          {
+            "beatInBar": 1,
+            "bpm100": 17400,
+            "milliseconds": 16232,
+            "microsecondRemainder": 426
+          },
+          {
+            "beatInBar": 2,
+            "bpm100": 17400,
+            "milliseconds": 16577,
+            "microsecondRemainder": 256
+          },
+          {
+            "beatInBar": 3,
+            "bpm100": 17400,
+            "milliseconds": 16922,
+            "microsecondRemainder": 86
+          },
+          {
+            "beatInBar": 4,
+            "bpm100": 17400,
+            "milliseconds": 17266,
+            "microsecondRemainder": 893
+          },
+          {
+            "beatInBar": 1,
+            "bpm100": 17400,
+            "milliseconds": 17611,
+            "microsecondRemainder": 723
+          },
+          {
+            "beatInBar": 2,
+            "bpm100": 17400,
+            "milliseconds": 17956,
+            "microsecondRemainder": 553
+          },
+          {
+            "beatInBar": 3,
+            "bpm100": 17400,
+            "milliseconds": 18301,
+            "microsecondRemainder": 383
+          },
+          {
+            "beatInBar": 4,
+            "bpm100": 17400,
+            "milliseconds": 18646,
+            "microsecondRemainder": 213
+          },
+          {
+            "beatInBar": 1,
+            "bpm100": 17400,
+            "milliseconds": 18991,
+            "microsecondRemainder": 43
+          },
+          {
+            "beatInBar": 2,
+            "bpm100": 17400,
+            "milliseconds": 19335,
+            "microsecondRemainder": 873
+          },
+          {
+            "beatInBar": 3,
+            "bpm100": 17400,
+            "milliseconds": 19680,
+            "microsecondRemainder": 702
+          },
+          {
+            "beatInBar": 4,
+            "bpm100": 17400,
+            "milliseconds": 20025,
+            "microsecondRemainder": 532
+          },
+          {
+            "beatInBar": 1,
+            "bpm100": 17400,
+            "milliseconds": 20370,
+            "microsecondRemainder": 362
+          },
+          {
+            "beatInBar": 2,
+            "bpm100": 17400,
+            "milliseconds": 20715,
+            "microsecondRemainder": 170
+          },
+          {
+            "beatInBar": 3,
+            "bpm100": 17400,
+            "milliseconds": 21060,
+            "microsecondRemainder": 0
+          },
+          {
+            "beatInBar": 4,
+            "bpm100": 17400,
+            "milliseconds": 21404,
+            "microsecondRemainder": 829
+          },
+          {
+            "beatInBar": 1,
+            "bpm100": 17400,
+            "milliseconds": 21749,
+            "microsecondRemainder": 659
+          }
+        ],
+        "globalBPM100": 17400,
+        "firstBeat": {
+          "offsetMilliseconds": 25,
+          "phase": 4
+        }
+      }
+    }
+  ],
+  "noTempoEvidenceBPMs": [
+    90
+  ],
+  "noTempoEvidenceOriginalBehavior": "No positive envelope score; alternate search repeatedly requests nonpositive tempos without clearing its continuation flag.",
+  "noTempoEvidenceSearchStarts": [
+    89.95,
+    -0.05,
+    -0.1,
+    -0.15000000000000002,
+    -0.2,
+    -0.25,
+    -0.3,
+    -0.35
+  ]
+}

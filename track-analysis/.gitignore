@@ -1,0 +1,6 @@
+worker/.build/
+worker/.swiftpm/
+out/
+dist/
+assets/track-analysis-worker.gz
+assets/NativeBeatModels/
