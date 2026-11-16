@@ -267,7 +267,8 @@ int main(void)
     config.groups[0].rule_count = 1;
     cues_rule_default(&config.groups[0].rules[0], &config.groups[0]);
     group_index = rule_index = 0;
-    const int sizes[][2] = {{1280, 800}, {1280, 420}, {800, 420}, {640, 300},
+    assert(screen.flags & AZ_SCREEN_DEDICATED);
+    const int sizes[][2] = {{1216, 535}, {1280, 800}, {1280, 420}, {800, 420}, {640, 300},
                             {480, 240},  {320, 240},  {240, 180}, {120, 80}};
     for (unsigned z = 0; z < sizeof sizes / sizeof sizes[0]; z++)
         for (int v = 0; v <= DELETE_RULE; v++)

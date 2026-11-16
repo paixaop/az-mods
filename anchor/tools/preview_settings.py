@@ -14,7 +14,8 @@ def main():
     subprocess.run(["make", "out/render_settings"], cwd=ROOT, check=True)
     font = next(p for p in (Path("/System/Library/Fonts/Menlo.ttc"),
                             Path("/usr/share/fonts/truetype/dejavu/DejaVuSansMono.ttf")) if p.exists())
-    for w, h, mode, theme in ((1280,420,"card","dark"), (1280,420,"card","day"),
+    for w, h, mode, theme in ((1216,535,"card","dark"), (1216,535,"card","day"),
+                              (1280,420,"card","dark"), (1280,420,"card","day"),
                               (1280,420,"cue","dark"), (1280,420,"sidebar","dark"),
                               (800,300,"card","dark"), (480,240,"phrase","dark"),
                               (480,240,"incoming","day"), (1280,800,"card","dark")):

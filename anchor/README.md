@@ -2,11 +2,12 @@
 
 Anchor times a transition so the incoming track's selected point reaches a chosen phrase boundary or
 cue in the outgoing track. It shows a large instruction for the physical PLAY or loop EXIT
-button. Anchor is a read-only guide and requires AZ-MODS 1.2.6 or newer.
+button. Anchor is a read-only guide and requires AZ-MODS 1.2.8 or newer.
 
 ## Choose your display
 
-Open **Community Mods > Installed > Anchor**, or **Anchor settings** in the Mod Menu.
+Open **Community Mods > Installed > Anchor > Settings**, or **Anchor settings** in the Mod Menu.
+The editor slides open across the full content area. BACK returns to the same menu selection.
 Change **Display** to one of:
 
 | Display | Placement | What you see |

@@ -6,10 +6,9 @@
 #                                    Ubuntu 18.04 toolchain); azmod-pack runs this
 #   make DEBUG=1 OUT=out-debug       a copy with debug info (-g) for addr2line: the same code
 #                                    at the same addresses as the plain build, plus line tables
-#   make test [SAN=plain|asan|tsan]  on your computer, with clang: build the mod for the
-#                                    host and run it under the SDK's test harness, plain,
-#                                    with AddressSanitizer + UBSan, or with ThreadSanitizer
+#   make test [SAN=plain|asan|tsan]  run the mod's public-service and page regression tests
 #                                    (default: all three). AZ_SDK is the SDK checkout.
+#   make test-harness               run the SDK's callback and rendering checks
 #
 # The flags below are the rules from docs/GUIDELINES.md in Makefile form:
 #   -fvisibility=hidden          export only az_mod_v1_entry (rule: one symbol)
@@ -32,8 +31,8 @@
 
 MOD_ID          := beatport-remember
 SRCS            := beatport-remember.c
-AZ_SDK_INCLUDE  ?= ../../sdk/include
-AZ_SDK          ?= ../../sdk
+AZ_SDK_INCLUDE  ?= $(AZ_SDK)/include
+AZ_SDK          ?= ../../az-mods-sdk
 MAX_REDRAWS     ?= 4          # the most repaints a second your tick asks for
 SAN             ?= plain asan tsan
 TEST_CC         ?= clang
@@ -72,7 +71,7 @@ endif
 comma := ,
 space := $(subst ,, )
 
-.PHONY: all clean test
+.PHONY: all clean test test-harness
 all: $(OUT)/$(MOD_ID).so
 
 ifeq ($(strip $(CXX_SRCS)),)
@@ -99,6 +98,9 @@ $(OUT):
 	mkdir -p $(OUT)
 
 test:
+	CC=$(TEST_CC) sh tests/run.sh "$(AZ_SDK_INCLUDE)" "$(SAN)"
+
+test-harness:
 	@test -f $(AZ_SDK)/tools/harness/sanitize.sh || \
 	    { echo "make test: set AZ_SDK to your az-mods-sdk checkout" >&2; exit 2; }
 	CC=$(TEST_CC) CXX=$(TEST_CXX) sh $(AZ_SDK)/tools/harness/sanitize.sh --passes "$(SAN)" \

@@ -482,5 +482,6 @@ static const az_screen_v1 settings_screen = {
     .on_input = input_cb,
     .on_enter = enter_cb,
     .user = NULL,
+    .flags = AZ_SCREEN_DEDICATED,
 };
 

@@ -110,7 +110,8 @@ int main(void)
     assert((touched & seen) == seen); /* every knob-accessible setting also has a touch path */
     az_event back = {.kind=AZ_EV_BACK}; assert(!settings_screen.on_input(&back,NULL));
     /* Non-zero origins, long labels, conditional fields, every placement, restricted sizes. */
-    const int sizes[][2] = {{1280,800},{1280,420},{1024,420},{900,420},{899,420},
+    assert(settings_screen.flags & AZ_SCREEN_DEDICATED);
+    const int sizes[][2] = {{1216,535},{1280,800},{1280,420},{1024,420},{900,420},{899,420},
                             {800,300},{480,240},{320,420},{240,180},{120,80}};
     for (unsigned z = 0; z < sizeof sizes/sizeof sizes[0]; z++)
         for (int mode = 0; mode < 4; mode++) for (int layout = 0; layout < 3; layout++) {

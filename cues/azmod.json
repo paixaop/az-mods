@@ -2,7 +2,7 @@
   "azmod": 1,
   "id": "cues",
   "name": "Cues",
-  "version": "0.1.0",
+  "version": "0.1.1",
   "author": "pedro",
   "summary": "Create hot cues and memory cues automatically with Phrase and Absolute rules.",
   "description": "Create groups of Phrase and Absolute rules in the Mod Menu. Choose pads, offsets, saved loops, colors and labels, then apply them with the CUES deck button. Existing cues require overwrite confirmation. Optional automatic placement waits for phrase analysis on track load and skips tracks with any cues. Configuration and JSON imports/exports live on the installation USB. Requires SDK cue-creation command support in the core.",
@@ -12,5 +12,5 @@
   "api": 1,
   "firmware": ["any"],
   "hooks": false,
-  "min_core": "1.2.6"
+  "min_core": "1.2.8"
 }

@@ -17,6 +17,7 @@ def main():
         Path("/usr/share/fonts/truetype/dejavu/DejaVuSansMono.ttf"),
     ) if path.exists())
     for width, height, mode, theme in (
+        (1216, 535, "groups", "dark"), (1216, 535, "phrase", "day"),
         (1280, 420, "groups", "dark"), (1280, 420, "phrase", "dark"),
         (1280, 420, "absolute", "dark"), (1280, 420, "global", "day"),
         (800, 420, "group", "dark"), (480, 240, "global", "day"),

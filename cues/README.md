@@ -27,7 +27,10 @@ Applied configuration is saved by a worker to `data/cue-rules.json` on the insta
 
 Manual replacement performs revision-fenced SDK deletions followed by creation. These are separate persistent writes. An error can leave partial changes; they cannot be rolled back atomically. An uncertain result stops further work on that load until the track is reloaded. Cues saves definitions in the deck's native cue store while preserving playback, the playhead and the working loop. It never triggers or recalls a cue, or engages a saved loop.
 
-Requires AZ-MODS 1.2.6 or newer **with the SDK `AZ_CMD_CUE_POINT_SET` / `AZ_CMD_CUE_LOOP_SET` capabilities**. A core without those commands can display the editor but cannot place cues.
+Requires AZ-MODS 1.2.8 or newer **with the SDK `AZ_CMD_CUE_POINT_SET` / `AZ_CMD_CUE_LOOP_SET` capabilities**. A core without those commands can display the editor but cannot place cues.
+
+Open **Community Mods > Installed > Cues > Settings** to slide the editor across the
+full content area. BACK closes an editor subpage first, then returns to the mod list.
 
 Build and validate with the sibling SDK checkout:
 

@@ -2,7 +2,7 @@
 
 ## Host and package checks
 
-Run from the Anchor folder with the AZ-MODS 1.2.6 SDK at `../../az-mods-sdk`.
+Run from the Anchor folder with the AZ-MODS 1.2.8 SDK at `../../az-mods-sdk`.
 
 ```sh
 make unit ui-test

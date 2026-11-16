@@ -2,7 +2,7 @@
   "azmod": 1,
   "id": "anchor",
   "name": "Anchor",
-  "version": "0.7.0",
+  "version": "0.7.1",
   "author": "pedro",
   "summary": "Time PLAY and loop EXIT with live deck-status events from AZ-MODS 1.2.6.",
   "description": "Align a chosen point on B with an outgoing phrase, cue or grid boundary in the two-deck waveform view. Pick phrase starts, Hot Cues or Set here in Ribbon, Card or Sidebar. B targets stay fixed through beat jumps and loop changes. Anchor follows working loops even while B is paused when the SDK publishes their boundaries. Anchor is a read-only guide.",
@@ -14,5 +14,5 @@
     "any"
   ],
   "hooks": false,
-  "min_core": "1.2.6"
+  "min_core": "1.2.8"
 }

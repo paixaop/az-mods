@@ -800,4 +800,7 @@ void cues_settings_tick(void)
         }
     }
 }
-static const az_screen_v1 screen = {sizeof(az_screen_v1), draw, input, enter, NULL};
+static const az_screen_v1 screen = {
+    .size = sizeof screen, .on_draw = draw, .on_input = input, .on_enter = enter,
+    .flags = AZ_SCREEN_DEDICATED,
+};
