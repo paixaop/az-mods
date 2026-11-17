@@ -9,29 +9,41 @@ import PortableDSP
 public enum WorkerError: Error { case malformedGrid, noAnalysis, outOfRange }
 
 public enum TrackAnalysisWorker {
-    /// Returns TA01 + big-endian grid length, phrase length, PCM rate + PQTZ/PSSI.
+    /// Returns legacy TA01 when needed is nil, or TA02 with the requested
+    /// grid/phrase/vocal payloads and the decoded source clock otherwise.
     /// The core owns publication and checks the source again before saving.
-    public static func analyze(audio: URL, savedDAT: URL?, globalBPM: Double) throws -> Data {
+    public static func analyze(audio: URL, savedDAT: URL?, globalBPM: Double, needed: UInt32? = nil) throws -> Data {
+        let wantsPhrases = needed == nil || needed! & 8 != 0
+        let wantsVocals = needed != nil && needed! & 32 != 0
+        if let needed {
+            guard needed & ~UInt32(4 | 8 | 32) == 0, wantsPhrases || wantsVocals,
+                  needed & 4 == 0 || wantsPhrases else { throw WorkerError.outOfRange }
+        }
         let input = try PCMDecoder(url: audio)
-        let saved = try savedDAT.flatMap { url -> [NativeBeatGrid.DetailedBeat]? in
+        let saved = try (wantsPhrases ? savedDAT : nil).flatMap { url -> [NativeBeatGrid.DetailedBeat]? in
             guard FileManager.default.fileExists(atPath: url.path) else { return nil }
             return try readGrid(Data(contentsOf: url), sampleRate: Double(input.rate))
         }
         let samples: NativePhraseFeatures.Samples
         let grid: [NativeBeatGrid.DetailedBeat]
         let timing: NativePhraseFeatures.Timing
-        if let saved, !saved.isEmpty {
+        if !wantsPhrases || (saved != nil && !saved!.isEmpty) {
             let decoder = input
             let processor = NativePhrasePCMProcessor(sampleRate: Double(decoder.rate), channels: 2)
+            var received = 0
             while let block = try decoder.read() {
+                received += block.count / 2
                 try processor.append(interleaved: block, frameCount: block.count / 2)
             }
+            guard received == decoder.frameCount else { throw AnalysisError.decodingFailed("Frame count changed") }
             samples = processor.finish(declaredFrameCount: decoder.frameCount - 1)
-            grid = saved
-            let bpm = globalBPM > 0 && globalBPM.isFinite ? globalBPM : Double(saved[0].bpm100) * 0.01
-            timing = try NativePhraseFeatures.referenceTiming(bpm: bpm,
-                firstBeatTime: Double(saved[0].milliseconds) * 0.001,
-                firstBeatPosition: Int(saved[0].beatInBar), firstBeatTempoBPM: Double(saved[0].bpm100) * 0.01)
+            grid = saved ?? []
+            if let saved, !saved.isEmpty {
+                let bpm = globalBPM > 0 && globalBPM.isFinite ? globalBPM : Double(saved[0].bpm100) * 0.01
+                timing = try NativePhraseFeatures.referenceTiming(bpm: bpm,
+                    firstBeatTime: Double(saved[0].milliseconds) * 0.001,
+                    firstBeatPosition: Int(saved[0].beatInBar), firstBeatTempoBPM: Double(saved[0].bpm100) * 0.01)
+            } else { timing = .init(bpm: 120, offsetMilliseconds: 0, phase: 1) }
         } else {
             let result = try NativeBeatAnalyzer.analyze(url: audio)
             guard !result.grid.beats.isEmpty, result.grid.firstBeat.offsetMilliseconds >= 0,
@@ -40,15 +52,22 @@ public enum TrackAnalysisWorker {
             timing = .init(bpm: Double(result.grid.globalBPM100) * 0.01,
                 offsetMilliseconds: Int(result.grid.firstBeat.offsetMilliseconds), phase: result.grid.firstBeat.phase)
         }
-        let decision = try NativePhraseInference.classify(samples: samples, timing: timing, fixedGrid: true)
-        guard !decision.output.entries.isEmpty, decision.output.endBeat <= grid.count,
-              decision.output.endBeat <= Int(UInt16.max), grid.count <= 32768,
-              decision.output.entries.count <= 1024 else { throw WorkerError.outOfRange }
-        let gridTag = saved == nil || saved!.isEmpty ? encodeGrid(grid) : Data()
-        let phraseTag = try encodePhrases(decision.output)
-        var result = Data("TA01".utf8)
-        result.u32(gridTag.count); result.u32(phraseTag.count); result.u32(Int(samples.sourceRate))
-        result.append(gridTag); result.append(phraseTag)
+        var gridTag = Data(), phraseTag = Data(), vocalTag = Data()
+        if wantsPhrases {
+            let decision = try NativePhraseInference.classify(samples: samples, timing: timing, fixedGrid: true)
+            guard !decision.output.entries.isEmpty, decision.output.endBeat <= grid.count,
+                  decision.output.endBeat <= Int(UInt16.max), grid.count <= 32768,
+                  decision.output.entries.count <= 1024 else { throw WorkerError.outOfRange }
+            gridTag = saved == nil || saved!.isEmpty ? encodeGrid(grid) : Data()
+            phraseTag = try encodePhrases(decision.output)
+        }
+        if wantsVocals { vocalTag = try VocalDetection.encode(samples: samples, sourceFrames: input.frameCount) }
+        var result = Data((needed == nil ? "TA01" : "TA02").utf8)
+        result.u32(gridTag.count); result.u32(phraseTag.count)
+        if needed != nil { result.u32(vocalTag.count) }
+        result.u32(input.rate)
+        if needed != nil { result.u32(input.frameCount) }
+        result.append(gridTag); result.append(phraseTag); result.append(vocalTag)
         return result
     }
 

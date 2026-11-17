@@ -44,25 +44,35 @@ enum NativePhraseSpectra {
         }
     }
 
-    static func vocalActivity(_ spectra: [[Double]]) throws -> [Double] {
-        guard !spectra.isEmpty, spectra.allSatisfy({ $0.count >= 743 }) else { throw NativePhraseClassifier.InputError.inconsistentDimensions }
-        var selected = [[Peak]](), levels = [Double]()
-        for row in spectra {
-            var section = NativePhraseEnvelopes.secondOrder(rate: 5512.5, angularCutoff: 471.23889803846896,
-                damping: 1.4142135623730951, highPass: false)
-            let values = section.process(row)
-            selected.append(peaks(values).filter { $0.position >= 112 })
-            var total = 0.0
-            for i in 111..<743 { total += pow(10, values[i] * 0.05) }
-            levels.append(log10(total * 0.0015822784810126582) * 20)
-        }
+    struct VocalMeasure {
+        let peak: Double
+        let level: Double
+    }
+
+    static func vocalMeasure(_ row: [Double]) throws -> VocalMeasure {
+        guard row.count >= 743 else { throw NativePhraseClassifier.InputError.inconsistentDimensions }
+        var section = NativePhraseEnvelopes.secondOrder(rate: 5512.5, angularCutoff: 471.23889803846896,
+            damping: 1.4142135623730951, highPass: false)
+        let values = section.process(row)
+        let maximum = peaks(values).filter {
+            $0.position >= 112 && $0.width / Double($0.position) > 0.11 && $0.prominence > 10
+        }.map(\.height).max() ?? 0
         var total = 0.0
-        for value in levels { total += pow(10, value * 0.05) }
-        let reference = log10(total / Double(levels.count))
-        return selected.map { candidates in
-            max(0, candidates.filter { $0.height > reference * 38.8 && $0.width / Double($0.position) > 0.11 && $0.prominence > 10 }
-                .map(\.height).max() ?? 0)
-        }
+        for i in 111..<743 { total += pow(10, values[i] * 0.05) }
+        return VocalMeasure(peak: maximum, level: log10(total * 0.0015822784810126582) * 20)
+    }
+
+    static func vocalScores(_ measures: [VocalMeasure]) -> [Double] {
+        guard !measures.isEmpty else { return [] }
+        var total = 0.0
+        for value in measures { total += pow(10, value.level * 0.05) }
+        let reference = log10(total / Double(measures.count))
+        return measures.map { $0.peak > reference * 38.8 ? max(0, $0.peak) : 0 }
+    }
+
+    static func vocalActivity(_ spectra: [[Double]]) throws -> [Double] {
+        guard !spectra.isEmpty else { throw NativePhraseClassifier.InputError.inconsistentDimensions }
+        return vocalScores(try spectra.map(vocalMeasure))
     }
 
     static func vocalEntries(_ activity: [Double]) -> [Int] {
@@ -156,7 +166,7 @@ enum NativePhraseSpectra {
         return result
     }
 
-    private final class Transform {
+    final class Transform {
         let size: Int
         let window: [Double]
 

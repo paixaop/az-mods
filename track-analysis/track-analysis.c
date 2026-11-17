@@ -15,7 +15,7 @@
 #include "inflate.h"
 
 #define ID "track-analysis"
-#define RESULT_MAX (16u + 24u + 32768u * 8u + 32u + 1024u * 24u)
+#define RESULT_MAX (24u + 24u + 32768u * 8u + 32u + 1024u * 24u + 24u + 262144u)
 static const az_core_v1 *C;
 static const az_library_v1 *L;
 static int enabled_row;
@@ -112,7 +112,7 @@ static int prepare_program(const char *assets, const char *data, char program[12
 }
 static int analyze(struct work *job) {
     az_analysis_job_v1 input = {.size = sizeof input};
-    int rc = L->analysis_open_loaded(ID, job->deck, job->epoch, &input);
+    int rc = L->analysis_open_loaded_v2(ID, job->deck, job->epoch, &input);
     static int last_open[4] = {INT32_MIN, INT32_MIN, INT32_MIN, INT32_MIN};
     if (AZ_HAS(C, log) && last_open[job->deck] != rc) {
         C->log(ID, "deck %d load %llu analysis lease: %d", job->deck + 1, (unsigned long long) job->epoch, rc);
@@ -121,13 +121,14 @@ static int analyze(struct work *job) {
     if (rc == AZ_NOT_FOUND) pending_link(&input);
     if (rc) return rc;
     if (input.version != AZ_DATA_VERSION || input.size < sizeof input || !input.job ||
-        !(input.needed & AZ_DATA_PHRASES) || (input.needed & ~(AZ_DATA_GRID | AZ_DATA_PHRASES)) ||
+        !(input.needed & (AZ_DATA_PHRASES | AZ_ANALYSIS_VOCALS)) ||
+        (input.needed & ~(AZ_DATA_GRID | AZ_DATA_PHRASES | AZ_ANALYSIS_VOCALS)) ||
         !(input.flags & AZ_ANALYSIS_LOADED) ||
         !memchr(input.audio_path, 0, sizeof input.audio_path) || !memchr(input.analysis_path, 0, sizeof input.analysis_path)) {
         if (input.job) close_job(input.job);
         return AZ_FAILED;
     }
-    char program[1200], output[1200], log[1200], models[1200], bpm[48];
+    char program[1200], output[1200], log[1200], models[1200], bpm[48], needed[16];
     const char *assets = C->assets_dir(ID), *data = C->data_dir(ID);
     if (!assets || !data ||
         snprintf(models, sizeof models, "%s/NativeBeatModels", assets) >= (int)sizeof models ||
@@ -143,9 +144,10 @@ static int analyze(struct work *job) {
     if (unlink(output)) output_ok = 0;
     if (!output_ok) { close_job(input.job); return AZ_FAILED; }
     snprintf(bpm, sizeof bpm, "%.8f", input.original_bpm);
-    const char *saved_grid = (input.needed & AZ_DATA_GRID) ? "-" : input.analysis_path;
-    /* launch supplies argv[0]; only pass the worker's five arguments. */
-    const char *argv[] = {input.audio_path, saved_grid, bpm, output, models, NULL};
+    snprintf(needed, sizeof needed, "%u", input.needed);
+    const char *saved_grid = (input.needed & AZ_DATA_GRID) || !input.analysis_path[0] ? "-" : input.analysis_path;
+    /* launch supplies argv[0]; only pass the worker's six arguments. */
+    const char *argv[] = {input.audio_path, saved_grid, bpm, output, models, needed, NULL};
     az_launch_opts opts = {.size = sizeof opts, .nice = 19, .mem_mb = 512, .log_path = log};
     int pid = C->launch(ID, program, argv, &opts);
     rc = AZ_FAILED;
@@ -210,8 +212,8 @@ static void tick(void) {
         int phase = atomic_load(&job->phase);
         if (phase == 3) {
             if (job->epoch == d->epoch) {
-                const char *message = job->result == AZ_OK ? "Phrase analysis ready" :
-                    job->result == AZ_NOT_FOUND ? "Already has phrases" :
+                const char *message = job->result == AZ_OK ? "Track analysis ready" :
+                    job->result == AZ_NOT_FOUND ? "Phrases and vocals ready" :
                     job->result == AZ_UNSUPPORTED ? "Unsupported audio or media source" :
                     job->result == AZ_STALE ? "Source changed or analysis cancelled" : "Analysis failed; see analysis.log";
                 snprintf(status_text[deck], sizeof status_text[deck], "Deck %d: %s", deck + 1, message);
@@ -224,7 +226,7 @@ static void tick(void) {
         if (!phase && d->loaded && d->epoch && d->attempted != d->epoch) {
             job->track = d->track; job->epoch = d->epoch; job->deck = deck; d->attempted = d->epoch;
             atomic_store(&job->cancelled, 0);
-            snprintf(status_text[deck], sizeof status_text[deck], "Deck %d: Checking phrase analysis", deck + 1);
+            snprintf(status_text[deck], sizeof status_text[deck], "Deck %d: Checking phrases and vocals", deck + 1);
             atomic_store(&job->phase, 1);
         }
     }
@@ -242,10 +244,10 @@ static int init(const az_core_v1 *core) {
         !AZ_HAS(core, register_row) || !AZ_HAS(core, register_screen) || !AZ_HAS(core, assets_dir) ||
         !AZ_HAS(core, data_dir) || !AZ_HAS(core, banner) || !AZ_HAS(core, lib_spool_kick)) return -1;
     C = core; L = C->library_service(AZ_LIBRARY_ABI);
-    if (!AZ_LIB_HAS(L, analysis_open_loaded) || !AZ_LIB_HAS(L, analysis_commit) || !AZ_LIB_HAS(L, analysis_close) ||
+    if (!AZ_LIB_HAS(L, analysis_open_loaded_v2) || !AZ_LIB_HAS(L, analysis_commit) || !AZ_LIB_HAS(L, analysis_close) ||
         !AZ_LIB_HAS(L, on_deck_status) || !AZ_LIB_HAS(L, deck_status_release)) return -2;
     az_row_v1 row = {.size = sizeof row, .key = "enabled", .label = "Track Analysis", .kind = AZ_ROW_TOGGLE,
-        .flags = AZ_ROW_DEFAULT_ON, .help = "Generate missing phrase analysis automatically for USB and Beatport tracks."};
+        .flags = AZ_ROW_DEFAULT_ON, .help = "Generate missing phrases and vocal intervals automatically for USB and Beatport tracks."};
     enabled_row = C->register_row(ID, &row);
     if (enabled_row < 0) return -3;
     static const az_screen_v1 screen = {.size = sizeof screen, .on_draw = draw};

@@ -154,3 +154,19 @@ used public SDK commands. The temporary control mod was removed after testing;
 the production mods passed the healthy-startup window with an empty crash trace.
 Logs, screenshots, source snapshots and hashes remain in the parent workspace's
 `temp/physical-auto-20261116/` directory.
+
+## Vocal interval coverage
+
+The worker tests exercise vocal-only analysis without a beat grid, tempo or model
+resources; 44.1/48 kHz encoded source clocks; silent instrumental output; short
+tracks; and the final partial PVDI frame. Existing native spectral witnesses still
+exercise the original activity and vocal-entry calculations after extracting their
+shared spectral measurement helper.
+
+Core `tests/sdk-analysis.sh` tests header-clock timestamp conversion, threshold/run
+boundaries, exact generated-duration clipping, sizing/capacity handling, all-zero
+completed analysis, unknown versions and malformed bytes. Service fixtures cover
+existing-PVDI precedence, vocal-only preservation of DAT/EXT, missing-all generation,
+saved-phrase refresh before vocal generation, stale load/file refusal, and copied
+USB/Beatport interval reads. These checks do not measure singing detection accuracy;
+that requires labeled recordings. No physical-deck vocal acceptance has been run.

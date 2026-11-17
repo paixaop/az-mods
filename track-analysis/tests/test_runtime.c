@@ -27,11 +27,14 @@ static int thread_start(const char *id, const char *name, void *(*fn)(void *), v
 }
 static char test_directory[] = "/tmp/track-analysis-runtime-XXXXXX";
 static int launched, committed;
+static unsigned needed_components = AZ_DATA_PHRASES | AZ_ANALYSIS_VOCALS;
 static int launch(const char *id, const char *path, const char *const argv[], const az_launch_opts *opts) {
     assert(!strcmp(id, ID) && strstr(path, "/track-analysis-worker"));
-    assert(!strcmp(argv[0], "/usb/audio.wav") && !strcmp(argv[1], "/usb/ANLZ0000.DAT"));
+    assert(!strcmp(argv[0], "/usb/audio.wav") && !strcmp(argv[1],
+        needed_components == AZ_ANALYSIS_VOCALS ? "-" : "/usb/ANLZ0000.DAT"));
     assert(!strcmp(argv[2], "120.00000000") && strstr(argv[3], "/result-7-"));
-    assert(strstr(argv[4], "/NativeBeatModels") && !argv[5]);
+    char needed[16]; snprintf(needed, sizeof needed, "%u", needed_components);
+    assert(strstr(argv[4], "/NativeBeatModels") && !strcmp(argv[5], needed) && !argv[6]);
     assert(opts->nice == 19 && opts->mem_mb == 512);
     FILE *file = fopen(argv[3], "wb"); assert(file);
     const char result[16] = "worker result";
@@ -45,8 +48,9 @@ static int analysis_open_loaded(const char *id, int deck, uint64_t epoch, az_ana
     assert(deck == 0 && epoch == 44);
     assert(!strcmp(id, ID) && out->size == sizeof *out);
     *out = (az_analysis_job_v1){.size = sizeof *out, .version = AZ_DATA_VERSION,
-        .needed = AZ_DATA_PHRASES, .flags = AZ_ANALYSIS_LOADED | AZ_ANALYSIS_STREAMING, .job = 7, .original_bpm = 120,
+        .needed = needed_components, .flags = AZ_ANALYSIS_LOADED | AZ_ANALYSIS_STREAMING, .job = 7, .original_bpm = 120,
         .audio_path = "/usb/audio.wav", .analysis_path = "/usb/ANLZ0000.DAT"};
+    if (needed_components == AZ_ANALYSIS_VOCALS) out->analysis_path[0] = 0;
     return AZ_OK;
 }
 static int analysis_commit(const char *id, uint64_t job, const void *data, uint32_t size) {
@@ -61,7 +65,7 @@ static int subscribe(const char *id, const az_deck_watch_v1 *watch, az_deck_stat
 }
 static const az_library_v1 *library(unsigned abi) {
     static const az_library_v1 lib = {.abi = AZ_LIBRARY_ABI, .size = sizeof lib,
-        .analysis_open_loaded = analysis_open_loaded, .analysis_commit = analysis_commit, .analysis_close = release,
+        .analysis_open_loaded_v2 = analysis_open_loaded, .analysis_commit = analysis_commit, .analysis_close = release,
         .on_deck_status = subscribe, .deck_status_release = release};
     assert(abi == AZ_LIBRARY_ABI); return &lib;
 }
@@ -130,6 +134,10 @@ int main(void) {
     assert(fwrite(packed, 1, sizeof packed, file) == sizeof packed && !fclose(file));
     struct work job = {.deck = 0, .epoch = 44};
     assert(analyze(&job) == AZ_OK && launched == 1 && committed == 1);
+    needed_components = AZ_ANALYSIS_VOCALS;
+    assert(analyze(&job) == AZ_OK && launched == 2 && committed == 2);
+    needed_components = AZ_DATA_PHRASES;
+    assert(analyze(&job) == AZ_OK && launched == 3 && committed == 3);
     assert(!unlink(packed_path) && !unlink(program_path) && !rmdir(test_directory));
     assert(init(NULL) == -1);
     puts("Track Analysis screen lifetime, load cancellation, retries and worker launch tests passed");
