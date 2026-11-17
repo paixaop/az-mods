@@ -170,7 +170,7 @@ static int quantize(const clock_map *m, int mode, double input, double *out)
     return 1;
 }
 
-/* Copy complete UTF-8 codepoints only; strings were validated at import. */
+/* Copy complete UTF-8 codepoints only; configuration strings were validated. */
 static size_t utf8_width(const char *s)
 {
     unsigned char c = (unsigned char)*s;
@@ -257,6 +257,14 @@ static int room(const cues_config *c, const az_native_cue_snapshot *existing,
     }
     return classification == AZ_CUE_MEMORY ? memory < c->max_memory && memory < 10 : 1;
 }
+static int rule_slot(const cues_config *c, const az_native_cue_snapshot *existing,
+                     const cues_plan *out, const cues_rule *r)
+{
+    if (!cues_rule_auto_pad(r)) return r->pad;
+    for (int slot = 1; slot <= c->hot_pads; ++slot)
+        if (room(c, existing, out, AZ_CUE_HOT, slot)) return slot;
+    return 0;
+}
 static int insert(const cues_config *c, const az_native_cue_snapshot *existing,
                   uint32_t rate, cues_plan *out, const cues_point *candidate)
 {
@@ -284,7 +292,7 @@ static int insert(const cues_config *c, const az_native_cue_snapshot *existing,
 }
 static int make_point(const cues_config *c, const cues_group *g, const cues_rule *r,
                       const clock_map *m, const az_native_cue_snapshot *existing,
-                      cues_plan *out, int category, double start, double end)
+                      cues_plan *out, int slot, int category, double start, double end)
 {
     cues_point p = {0};
     double anchor = 0;
@@ -316,7 +324,7 @@ static int make_point(const cues_config *c, const cues_group *g, const cues_rule
     }
     if (!time_range(m, p.start_s)) return 0;
     p.classification = (uint32_t)r->cue_type;
-    p.slot = r->cue_type == AZ_CUE_HOT ? (uint32_t)r->pad : 0;
+    p.slot = r->cue_type == AZ_CUE_HOT ? (uint32_t)slot : 0;
     p.rgb = cues_colors[r->color];
     label(&p, r, g, m, category, start, end);
     return insert(c, existing, m->rate, out, &p);
@@ -374,9 +382,20 @@ int cues_build_plan(const cues_config *c, const az_track_snapshot *s,
                     r->loop_mode < CUES_NO_LOOP || r->loop_mode > CUES_LOOP_TO_END ||
                     !isfinite(r->position) || !isfinite(r->offset) || !isfinite(r->loop_length) ||
                     !terminated(r->name, sizeof r->name) || !terminated(r->comment, sizeof r->comment)) return AZ_INVALID;
-                if (!room(c, existing, out, type, r->pad)) { ++out->skipped; continue; }
+                /* A new load can publish an empty phrase bank before Track
+                 * Analysis finishes. Do not commit the absolute subset and
+                 * consume this load's automatic placement before phrase rules
+                 * can run. The next map revision retries the whole plan. */
+                if (r->anchor == CUES_PHRASE &&
+                    (!map.grid_valid || !ready(&s->phrases_info) ||
+                     !s->phrases || !s->phrase_count)) {
+                    memset(out, 0, sizeof *out);
+                    return AZ_PENDING;
+                }
+                int slot = rule_slot(c, existing, out, r);
+                if (!room(c, existing, out, type, slot)) { ++out->skipped; continue; }
                 if (r->anchor == CUES_ABSOLUTE) {
-                    if (!make_point(c, g, r, &map, existing, out, 0, 0, 0)) ++out->skipped;
+                    if (!make_point(c, g, r, &map, existing, out, slot, 0, 0, 0)) ++out->skipped;
                     continue;
                 }
                 if (!map.grid_valid || !ready(&s->phrases_info) || !s->phrases || s->phrase_count > 2048) {
@@ -385,7 +404,8 @@ int cues_build_plan(const cues_config *c, const az_track_snapshot *s,
                 }
                 unsigned match = 0;
                 for (uint32_t pi = 0; pi < s->phrase_count; ++pi) {
-                    if (!room(c, existing, out, type, r->pad)) break;
+                    slot = rule_slot(c, existing, out, r);
+                    if (!room(c, existing, out, type, slot)) break;
                     const az_phrase *p = &s->phrases[pi];
                     int category = phrase_category(p);
                     if (r->phrase_type && r->phrase_type != category) continue;
@@ -394,7 +414,7 @@ int cues_build_plan(const cues_config *c, const az_track_snapshot *s,
                     if (p->start_beat >= p->end_beat || p->end_beat >= s->beat_count ||
                         (pi && p->start_beat < s->phrases[pi - 1].end_beat)) { ++out->skipped; continue; }
                     double start = s->beats[p->start_beat].time_s, end = s->beats[p->end_beat].time_s;
-                    if (!make_point(c, g, r, &map, existing, out, category, start, end)) ++out->skipped;
+                    if (!make_point(c, g, r, &map, existing, out, slot, category, start, end)) ++out->skipped;
                 }
             }
         }

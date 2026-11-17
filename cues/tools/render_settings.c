@@ -17,17 +17,14 @@ int cues_store_init(const az_core_v1 *core, cues_config *out, char *status, size
     snprintf(status, n, "Rules saved to USB");
     return 1;
 }
-int cues_store_request(int op, const cues_config *c, unsigned rev)
+int cues_store_request(const cues_config *c, unsigned rev)
 {
-    (void)op;
     (void)c;
     (void)rev;
     return 0;
 }
-int cues_store_take(cues_config *out, int *op, unsigned *rev, char *status, size_t n)
+int cues_store_take(unsigned *rev, char *status, size_t n)
 {
-    (void)out;
-    (void)op;
     (void)rev;
     (void)status;
     (void)n;
@@ -88,7 +85,7 @@ int main(int argc, char **argv)
     if (argc < 5) {
         fprintf(stderr,
                 "usage: %s out.json width height "
-                "groups|group|phrase|absolute|global|files|keyboard [day]\n",
+                "groups|group|phrase|absolute|all-pads|memory-pad|global|files|keyboard [day]\n",
                 argv[0]);
         return 2;
     }
@@ -128,6 +125,12 @@ int main(int argc, char **argv)
     else if (!strcmp(mode, "phrase")) {
         view = RULE;
         page = 1;
+    } else if (!strcmp(mode, "all-pads") || !strcmp(mode, "memory-pad")) {
+        view = RULE;
+        config.groups[0].rules[0].phrase_type = 4;
+        config.groups[0].rules[0].phrase_index = 0;
+        if (!strcmp(mode, "memory-pad"))
+            config.groups[0].rules[0].cue_type = AZ_CUE_MEMORY;
     } else if (!strcmp(mode, "absolute")) {
         view = RULE;
         config.groups[0].rules[0].anchor = CUES_ABSOLUTE;

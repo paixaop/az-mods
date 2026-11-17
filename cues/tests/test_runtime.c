@@ -6,6 +6,7 @@
 
 static cues_config config;
 static int event_kind = AZ_STATUS_CHANGE;
+static int qualified_track = 1, load_metadata;
 static const az_screen_v1 screen = {.size = sizeof screen};
 static az_command_request submitted[16];
 static int submissions, acknowledgements, cancellations, threads, refusals;
@@ -60,8 +61,13 @@ void cues_settings_tick(void) {}
 int cues_build_plan(const cues_config *c, const az_track_snapshot *track,
                     const az_native_cue_snapshot *existing, uint32_t rate,
                     cues_plan *out) {
-    assert(c->enabled && track->metadata.valid & AZ_META_ARTIST);
-    assert(!strcmp(track->metadata.artist, "Test artist"));
+    assert(c->enabled);
+    if (qualified_track || load_metadata) {
+        assert(track->metadata.valid & AZ_META_ARTIST);
+        assert(!strcmp(track->metadata.artist, "Test artist"));
+    } else {
+        assert(!(track->metadata.valid & (AZ_META_ARTIST | AZ_META_TITLE)));
+    }
     assert(rate == 48000 && existing->revision);
     *out = (cues_plan){.count = planned_count};
     out->points[0] = (cues_point){.classification = AZ_CUE_HOT,
@@ -202,6 +208,11 @@ static void deliver(uint32_t rate, uint64_t epoch, int loaded) {
         .state_info = receipt(88, AZ_STATUS_UNIT, 1),
         .track_info = receipt(epoch, AZ_STATUS_LOAD_SCOPE, 1)};
     load.state_info.info.provenance = load_provenance;
+    if (!qualified_track) {
+        load.header.valid &= ~az_status_field_bit(AZ_STATUS_LOAD_TRACK);
+        load.track_info.info.availability = AZ_AVAIL_UNSUPPORTED;
+        /* Keep a stale nonzero payload to prove validity is respected. */
+    }
     az_status_metadata_v1 meta = {
         .header = {.size = sizeof meta,
                    .version = AZ_DATA_VERSION,
@@ -215,6 +226,10 @@ static void deliver(uint32_t rate, uint64_t epoch, int loaded) {
         .title_info = receipt(88, AZ_STATUS_UNIT, 10),
         .artist_info = receipt(88, AZ_STATUS_UNIT, 11),
         .duration_s_info = receipt(epoch, AZ_STATUS_LOAD_SCOPE, 1)};
+    if (load_metadata) {
+        meta.title_info = receipt(epoch, AZ_STATUS_LOAD_SCOPE, 10);
+        meta.artist_info = receipt(epoch, AZ_STATUS_LOAD_SCOPE, 11);
+    }
     az_status_position_v1 pos = {.header = {.size = sizeof pos,
                                             .version = AZ_DATA_VERSION,
                                             .supported = 1,
@@ -661,6 +676,67 @@ int main(void) {
                decks[0].auto_done_epoch == epoch && !atomic_load(&jobs[0].phase));
         assert(bank.count == 1 && bank.entries[0].type == AZ_CUE_LOOP);
     }
+    /* Streaming/native loads need no USB reference. Unit metadata without a
+     * qualified join stays unavailable; load-scoped metadata remains usable. */
+    qualified_track = 0;
+    bank.count = 0;
+    for (uint64_t epoch = 25; epoch <= 26; ++epoch) {
+        load_metadata = 0;
+        if (epoch == 26) {
+            config.group_count = 1;
+            config.groups[0].enabled = config.groups[0].rule_count = 1;
+            snprintf(config.groups[0].artist, sizeof config.groups[0].artist,
+                     "Test artist");
+        }
+        live.native_load_generation = bank.native_load_generation = epoch;
+        bank.revision++;
+        deliver(44100, epoch, 1);
+        assert(decks[0].loaded && !decks[0].track.track.track_id);
+        if (epoch == 26) {
+            step();
+            assert(!atomic_load(&jobs[0].phase) && submissions == 7);
+            assert(strstr(shown, "waiting for rule filter metadata"));
+            load_metadata = 1;
+            deliver(44100, epoch, 1);
+        }
+        uint64_t revision = decks[0].revision;
+        step();
+        assert(atomic_load(&jobs[0].phase) == 1);
+        deliver(44100, epoch, 1);
+        assert(decks[0].revision == revision); /* Same load keeps its plan. */
+        assert(worker_step());
+        step();
+        assert(submissions == (int)(epoch - 18) &&
+               submitted[submissions - 1].expected_load_generation == epoch &&
+               submitted[submissions - 1].flags == WRITE_FLAGS);
+        c = terminal(AZ_COMMAND_UNCERTAIN, 0);
+        callback(&c, callback_user);
+        release(c);
+    }
+    /* A late USB reference/metadata join cannot truncate a plan that already
+     * started writing for this native load. All remaining cue fences stay live. */
+    config.group_count = 0;
+    load_metadata = 0;
+    live.native_load_generation = bank.native_load_generation = 27;
+    bank.revision = 900;
+    deliver(44100, 27, 1);
+    step();
+    assert(worker_step());
+    step();
+    assert(submissions == 9 && decks[0].pending && decks[0].plan_ready);
+    qualified_track = 1;
+    deliver(44100, 27, 1);
+    assert(decks[0].pending && decks[0].plan_ready && !decks[0].obsolete);
+    c = terminal(AZ_COMMAND_APPLIED, 901);
+    callback(&c, callback_user);
+    release(c);
+    bank.revision = 901;
+    step();
+    assert(submissions == 10 && submitted[9].expected_load_generation == 27 &&
+           submitted[9].expected_revision == 901);
+    c = terminal(AZ_COMMAND_UNCERTAIN, 0);
+    callback(&c, callback_user);
+    release(c);
     puts(
         "Runtime passed: public SDK commands, native load fences, source rate, "
         "async cleanup, cache lag, disable and uncertainty");

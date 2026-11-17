@@ -142,6 +142,26 @@ static void phrase_rules(void)
     phrases[1].start_beat = 7; /* overlap must not produce a second cue */
     build(); assert(plan.count == 1 && plan.skipped == 1);
 }
+static void pending_phrase_analysis(void)
+{
+    setup();
+    rule(0, CUES_ABSOLUTE, AZ_CUE_HOT, CUES_SECONDS, 0);
+    cues_rule *phrase = rule(1, CUES_PHRASE, AZ_CUE_MEMORY, CUES_SECONDS, 0);
+    phrase->phrase_type = 1;
+    track.phrase_count = 0;
+    track.phrases_info.availability = AZ_AVAIL_EMPTY;
+    assert(cues_build_plan(&config, &track, &existing, rate, &plan) == AZ_PENDING);
+    assert(plan.count == 0); /* No early track-start cue consumes the load. */
+    track.phrases_info.availability = AZ_AVAIL_LOADING;
+    assert(cues_build_plan(&config, &track, &existing, rate, &plan) == AZ_PENDING);
+    assert(plan.count == 0);
+    phrase->enabled = 0;
+    build(); assert(plan.count == 1); /* Absolute-only rules need no phrases. */
+    phrase->enabled = 1;
+    track.phrase_count = 5;
+    track.phrases_info.availability = AZ_AVAIL_READY;
+    build(); assert(plan.count == 2); /* The duplicate at track start is skipped. */
+}
 static void variable_grid_and_loops(void)
 {
     setup();
@@ -172,6 +192,89 @@ static void variable_grid_and_loops(void)
     r->loop_mode = CUES_NO_LOOP; r->unit = CUES_BARS;
     for (unsigned i = 0; i < 65; ++i) beats[i].beat_in_bar = 0;
     build(); assert(plan.count == 0); /* no meter invented */
+}
+static void automatic_hot_pads(void)
+{
+    setup();
+    rule(0, CUES_ABSOLUTE, AZ_CUE_HOT, CUES_SECONDS, 1)->pad = 1;
+    cues_rule *r = rule(1, CUES_PHRASE, AZ_CUE_HOT, CUES_SECONDS, 0);
+    r->phrase_type = 1;
+    r->pad = 8; /* Legacy All rules' fixed pads no longer restrict allocation. */
+    add_existing(AZ_CUE_HOT, 2, 20);
+    build(); assert(plan.count == 3);
+    assert(plan.points[0].slot == 1 && plan.points[1].slot == 3 && plan.points[2].slot == 4);
+    at(plan.points[1].start_s, 0); at(plan.points[2].start_s, 4);
+    config.hot_pads = 3;
+    build(); assert(plan.count == 2 && plan.points[1].slot == 3);
+    r->phrase_index = 2;
+    build(); assert(plan.count == 1); /* A numbered occurrence still uses its fixed pad. */
+    r->pad = 3;
+    build(); assert(plan.count == 2 && plan.points[1].slot == 3); at(plan.points[1].start_s, 4);
+    r->phrase_index = 0;
+    r->offset = -1; /* Invalid first occurrence must not consume the available pad. */
+    build(); assert(plan.count == 2 && plan.points[1].slot == 3); at(plan.points[1].start_s, 3);
+    r->offset = 0;
+    existing.entries[0].start_s = 0; /* A collision also leaves the pad available. */
+    build(); assert(plan.count == 2 && plan.points[1].slot == 3); at(plan.points[1].start_s, 4);
+
+    setup();
+    static az_phrase many[10];
+    for (unsigned i = 0; i < 10; ++i)
+        many[i] = (az_phrase){.start_beat = i * 4, .end_beat = i * 4 + 4,
+                              .raw_mood = 1, .raw_kind = 5};
+    track.phrases = many; track.phrase_count = 10;
+    r = rule(0, CUES_PHRASE, AZ_CUE_HOT, CUES_SECONDS, 0);
+    r->phrase_type = 4;
+    build(); assert(plan.count == 8);
+    for (int i = 0; i < 8; ++i) {
+        assert(plan.points[i].slot == (unsigned)i + 1);
+        at(plan.points[i].start_s, i * 2.);
+    }
+}
+
+static void default_rules_file(void)
+{
+    setup();
+    char json[8192], error[160];
+    FILE *file = fopen("examples/cue-rules.json", "r");
+    assert(file);
+    size_t n = fread(json, 1, sizeof json, file);
+    assert(!ferror(file) && feof(file));
+    assert(fclose(file) == 0);
+    assert(cues_config_parse(&config, json, n, error, sizeof error));
+    assert(config.enabled && config.group_count == 1 && config.groups[0].rule_count == 4);
+    assert(!config.groups[0].artist[0] && !config.groups[0].key[0]);
+    /* Three-beat bars and a tempo change catch offsets that assume 4/4 or fixed BPM. */
+    static az_beat grid[433];
+    static az_phrase choruses[2];
+    for (unsigned i = 0; i < 433; ++i)
+        grid[i] = (az_beat){.time_s = i < 200 ? .25 + i * .5 : 100.25 + (i - 200) * .75,
+                            .beat_in_bar = i % 3 + 1, .bpm = i < 200 ? 120 : 80};
+    choruses[0] = (az_phrase){.start_beat = 48, .end_beat = 192, .raw_mood = 1, .raw_kind = 5};
+    choruses[1] = (az_phrase){.start_beat = 240, .end_beat = 384, .raw_mood = 2, .raw_kind = 9};
+    track.beats = grid; track.beat_count = 433;
+    track.phrases = choruses; track.phrase_count = 2;
+    track.metadata.duration_s = 300;
+    build(); assert(plan.count == 7);
+    assert(plan.points[0].slot == 1); at(plan.points[0].start_s, 0);
+    for (unsigned i = 0; i < 2; ++i) {
+        assert(plan.points[1 + i].classification == AZ_CUE_HOT && plan.points[1 + i].slot == i + 2);
+        at(plan.points[1 + i].start_s, grid[choruses[i].start_beat].time_s);
+        assert(plan.points[3 + i].classification == AZ_CUE_MEMORY);
+        at(plan.points[3 + i].start_s, grid[choruses[i].end_beat - 16 * 3].time_s);
+        assert(plan.points[5 + i].classification == AZ_CUE_MEMORY);
+        at(plan.points[5 + i].start_s, grid[choruses[i].end_beat - 32 * 3].time_s);
+    }
+    /* Hot cues win when a 32-bar chorus puts its -32 memory point at its start. */
+    choruses[0].end_beat = choruses[0].start_beat + 32 * 3;
+    build(); assert(plan.count == 6 && plan.skipped == 1);
+    at(plan.points[1].start_s, grid[choruses[0].start_beat].time_s);
+    at(plan.points[5].start_s, grid[choruses[1].end_beat - 32 * 3].time_s);
+    /* The same policy applies to -16 bars on a 16-bar chorus. */
+    choruses[1].end_beat = choruses[1].start_beat + 16 * 3;
+    build(); assert(plan.count == 5 && plan.skipped == 2);
+    at(plan.points[2].start_s, grid[choruses[1].start_beat].time_s);
+    at(plan.points[4].start_s, grid[choruses[1].end_beat - 32 * 3].time_s);
 }
 static void quantization(void)
 {
@@ -282,7 +385,8 @@ static void maximum_analysis(void)
 }
 int main(void)
 {
-    absolute_and_metadata(); phrase_rules(); variable_grid_and_loops(); quantization(); conflicts_and_limits(); utf8_labels(); maximum_analysis();
+    absolute_and_metadata(); phrase_rules(); pending_phrase_analysis(); variable_grid_and_loops(); automatic_hot_pads();
+    default_rules_file(); quantization(); conflicts_and_limits(); utf8_labels(); maximum_analysis();
     puts("Cue planning passed: source clocks, phrases, variable tempo/meter, loops, quantization, filters, preservation, limits and UTF-8");
     return 0;
 }

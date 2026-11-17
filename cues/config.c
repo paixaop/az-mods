@@ -520,6 +520,7 @@ static int anchor(parser *p, int i, cues_rule *r)
 }
 static int rule_data(parser *p, int i, cues_rule *r)
 {
+    int automatic_pad = 0;
     static const char *const keys[] = {"enabled", "type",  "pad",  "anchor", "offset",
                                        "loop",    "color", "name", "comment"};
     OBJECT(p, i, keys)
@@ -533,9 +534,13 @@ static int rule_data(parser *p, int i, cues_rule *r)
     } else if (f == 2) {
         char s[4];
         CHECK(str(p, v, s, sizeof s));
-        if (s[0] < 'A' || s[0] > 'H' || s[1])
+        if (!strcmp(s, "*")) {
+            automatic_pad = 1;
+            r->pad = 1;
+        } else if (s[0] < 'A' || s[0] > 'H' || s[1])
             return fail(p, "Invalid hot cue pad");
-        r->pad = s[0] - 'A' + 1;
+        else
+            r->pad = s[0] - 'A' + 1;
     } else if (f == 3)
         CHECK(anchor(p, v, r));
     else if (f == 4)
@@ -555,6 +560,8 @@ static int rule_data(parser *p, int i, cues_rule *r)
     else
         CHECK(str(p, v, r->comment, sizeof r->comment));
     END_OBJECT if ((seen & 10) != 10) return fail(p, "Rule needs type and anchor");
+    if (automatic_pad && !cues_rule_auto_pad(r))
+        return fail(p, "Automatic hot pads require All phrase occurrences");
     return 1;
 }
 static int rule(parser *p, int i, cues_rule *r)
@@ -720,7 +727,7 @@ int cues_config_parse(cues_config *out, const char *json, size_t length, char *e
     free(next);
     return okay;
 }
-/* Source-compatible JSON export, excluding analysis-only options. */
+/* Source-compatible JSON serialization, excluding analysis-only options. */
 typedef struct {
     char *s;
     size_t n, p;
@@ -787,7 +794,7 @@ int cues_config_json(const cues_config *c, char *json, size_t capacity)
             writef(&w, "%s\n      {\"data\":{\"enabled\":%s,\"type\":\"%s\"", j ? "," : "",
                    r->enabled ? "true" : "false", r->cue_type == AZ_CUE_HOT ? "hot" : "memory");
             if (r->cue_type == AZ_CUE_HOT)
-                writef(&w, ",\"pad\":\"%c\"", 'A' + r->pad - 1);
+                writef(&w, ",\"pad\":\"%c\"", cues_rule_auto_pad(r) ? '*' : 'A' + r->pad - 1);
             writef(&w, ",\"anchor\":{\"type\":\"%s\",",
                    r->anchor == CUES_PHRASE ? "phrase" : "absolute");
             if (r->anchor == CUES_PHRASE) {

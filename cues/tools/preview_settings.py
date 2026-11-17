@@ -18,6 +18,8 @@ def main():
     ) if path.exists())
     for width, height, mode, theme in (
         (1216, 535, "groups", "dark"), (1216, 535, "phrase", "day"),
+        (1216, 535, "files", "dark"), (480, 240, "files", "day"),
+        (1216, 800, "all-pads", "dark"), (1216, 800, "memory-pad", "day"),
         (1280, 420, "groups", "dark"), (1280, 420, "phrase", "dark"),
         (1280, 420, "absolute", "dark"), (1280, 420, "global", "day"),
         (800, 420, "group", "dark"), (480, 240, "global", "day"),

@@ -41,6 +41,12 @@ uses `"firmware": ["any"]` because the mod uses only the public SDK;
 the core still checks whether its native Beatport service supports the
 running firmware. A missing or unsupported service does not activate the mod.
 
+After upgrading to 0.3.0, ordinary core updates do not require rebuilding this
+mod. The ABI v1 service is append-only: the core keeps its existing entries and
+owns changes required by new firmware. A future core may extend its tables;
+this mod reads only the supported prefix. Unknown ABI versions, shorter tables,
+missing entries and unsupported firmware are refused before login is configured.
+
 ## Credential storage
 
 The core stores the login at the existing location:

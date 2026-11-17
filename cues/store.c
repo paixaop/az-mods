@@ -16,7 +16,7 @@ static const az_core_v1 *SC;
 /* Single producer/consumer mailbox. Only the thread owning the phase may access
  * payload; release/acquire transfers the whole bounded config without a UI lock. */
 static struct {
-    int phase, operation, result, started;
+    int phase, result, started;
     unsigned revision;
     cues_config config;
     char message[160];
@@ -130,18 +130,9 @@ static void perform(void)
         message(box.message, sizeof box.message, "USB data path is too long");
         return;
     }
-    box.result = box.operation == CUES_STORE_IMPORT
-                     ? load_config(dir, "cue-rules-import.json", &box.config, box.message,
-                                   sizeof box.message)
-                     : save_config(dir,
-                                   box.operation == CUES_STORE_EXPORT ? "cue-rules-export.json"
-                                                                      : "cue-rules.json",
-                                   &box.config, box.message, sizeof box.message);
+    box.result = save_config(dir, "cue-rules.json", &box.config, box.message, sizeof box.message);
     if (box.result)
-        snprintf(box.message, sizeof box.message, "%s",
-                 box.operation == CUES_STORE_IMPORT   ? "Imported rules; saving configuration"
-                 : box.operation == CUES_STORE_EXPORT ? "Exported cue-rules-export.json"
-                                                      : "Rules saved to USB");
+        snprintf(box.message, sizeof box.message, "Rules saved to USB");
 }
 static void *worker(void *unused)
 {
@@ -187,27 +178,23 @@ int cues_store_init(const az_core_v1 *core, cues_config *config, char *status, s
     box.started = 1;
     return 1;
 }
-int cues_store_request(int operation, const cues_config *config, unsigned revision)
+int cues_store_request(const cues_config *config, unsigned revision)
 {
-    if (!box.started || operation < CUES_STORE_SAVE || operation > CUES_STORE_EXPORT)
+    if (!box.started)
         return -1;
     int idle = 0;
     if (!__atomic_compare_exchange_n(&box.phase, &idle, 1, 0, __ATOMIC_ACQUIRE, __ATOMIC_RELAXED))
         return 0;
     box.config = *config;
-    box.operation = operation;
     box.revision = revision;
     __atomic_store_n(&box.phase, 2, __ATOMIC_RELEASE);
     return 1;
 }
-int cues_store_take(cues_config *config, int *operation, unsigned *revision, char *status, size_t n)
+int cues_store_take(unsigned *revision, char *status, size_t n)
 {
     if (__atomic_load_n(&box.phase, __ATOMIC_ACQUIRE) != 4)
         return 0;
-    *operation = box.operation;
     *revision = box.revision;
-    if (config && box.result && box.operation == CUES_STORE_IMPORT)
-        *config = box.config;
     message(status, n, box.message);
     int result = box.result ? 1 : -1;
     __atomic_store_n(&box.phase, 0, __ATOMIC_RELEASE);

@@ -1,20 +1,20 @@
 {
     "version": 1,
     "config": {
-        "enabled": false,
+        "enabled": true,
         "maxMemoryCues": 10,
         "hotCuePads": 8,
-        "minBpm": 20,
-        "maxBpm": 400,
+        "minBpm": 1,
+        "maxBpm": 500,
         "minDistance": 0,
         "cuePreference": "Hot Cue",
-        "quantization": "Beat",
+        "quantization": "Off",
         "measuresIn": "Bars"
     },
     "groups": [
         {
             "enabled": true,
-            "name": "Structure",
+            "name": "All genres",
             "comment": "",
             "tags": {
                 "artist": "",
@@ -33,21 +33,14 @@
                         "type": "hot",
                         "pad": "A",
                         "anchor": {
-                            "type": "phrase",
-                            "phrases": [
-                                {
-                                    "anchor": "start",
-                                    "type": "Intro",
-                                    "index": "1"
-                                }
-                            ]
-                        },
-                        "offset": {
-                            "value": 0,
-                            "unit": "bars"
+                            "type": "absolute",
+                            "absolute": {
+                                "value": 0,
+                                "unit": "seconds"
+                            }
                         },
                         "color": "Red",
-                        "name": "{phrase}",
+                        "name": "Track start",
                         "comment": ""
                     }
                 },
@@ -55,26 +48,22 @@
                     "data": {
                         "enabled": true,
                         "type": "hot",
-                        "pad": "B",
+                        "pad": "*",
                         "anchor": {
                             "type": "phrase",
                             "phrases": [
                                 {
                                     "anchor": "start",
                                     "type": "Chorus/Drop",
-                                    "index": "1"
+                                    "index": "All"
                                 }
                             ]
                         },
                         "offset": {
-                            "value": -8,
+                            "value": 0,
                             "unit": "bars"
                         },
-                        "loop": {
-                            "value": 8,
-                            "unit": "bars"
-                        },
-                        "color": "Red",
+                        "color": "Green",
                         "name": "{phrase}",
                         "comment": ""
                     }
@@ -84,14 +73,44 @@
                         "enabled": true,
                         "type": "memory",
                         "anchor": {
-                            "type": "absolute",
-                            "absolute": {
-                                "value": 0,
-                                "unit": "seconds"
-                            }
+                            "type": "phrase",
+                            "phrases": [
+                                {
+                                    "anchor": "end",
+                                    "type": "Chorus/Drop",
+                                    "index": "All"
+                                }
+                            ]
                         },
-                        "color": "No Color",
-                        "name": "Start",
+                        "offset": {
+                            "value": -16,
+                            "unit": "bars"
+                        },
+                        "color": "Yellow",
+                        "name": "{phrase} end -16 bars",
+                        "comment": ""
+                    }
+                },
+                {
+                    "data": {
+                        "enabled": true,
+                        "type": "memory",
+                        "anchor": {
+                            "type": "phrase",
+                            "phrases": [
+                                {
+                                    "anchor": "end",
+                                    "type": "Chorus/Drop",
+                                    "index": "All"
+                                }
+                            ]
+                        },
+                        "offset": {
+                            "value": -32,
+                            "unit": "bars"
+                        },
+                        "color": "Orange",
+                        "name": "{phrase} end -32 bars",
                         "comment": ""
                     }
                 }

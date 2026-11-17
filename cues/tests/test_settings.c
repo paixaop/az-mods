@@ -9,9 +9,9 @@ struct az_draw {
 #include "../settings.c"
 static az_rect bounds, texts[512];
 static int text_count, events, redraws;
-static int pending_op, completed_result;
+static int pending_save, completed_result;
 static unsigned pending_rev;
-static cues_config stored, imported_config;
+static cues_config stored;
 int cues_store_init(const az_core_v1 *core, cues_config *out, char *status, size_t n)
 {
     (void)core;
@@ -19,25 +19,22 @@ int cues_store_init(const az_core_v1 *core, cues_config *out, char *status, size
     snprintf(status, n, "Create a group to begin");
     return 1;
 }
-int cues_store_request(int op, const cues_config *value, unsigned rev)
+int cues_store_request(const cues_config *value, unsigned rev)
 {
-    if (pending_op)
+    if (pending_save)
         return 0;
-    pending_op = op;
+    pending_save = 1;
     pending_rev = rev;
     stored = *value;
     return 1;
 }
-int cues_store_take(cues_config *out, int *op, unsigned *rev, char *status, size_t n)
+int cues_store_take(unsigned *rev, char *status, size_t n)
 {
     if (!completed_result)
         return 0;
-    *op = pending_op;
     *rev = pending_rev;
-    if (pending_op == CUES_STORE_IMPORT && completed_result > 0)
-        *out = imported_config;
     snprintf(status, n, "Worker completed");
-    pending_op = 0;
+    pending_save = 0;
     int result = completed_result;
     completed_result = 0;
     return result;
@@ -163,6 +160,25 @@ static void key(int arg)
     }
     assert(!"missing key");
 }
+static void check_pad_field(int disabled, const char *display)
+{
+    page = 0;
+    paint(1280, 800);
+    int index = -1;
+    for (int i = 0; i < field_count; ++i)
+        if (!strcmp(fields[i].label, "Hot cue pad")) index = i;
+    assert(index >= 0 && fields[index].disabled == disabled);
+    if (display) assert(fields[index].display && !strcmp(fields[index].display, display));
+    int interactive = 0;
+    for (int i = 0; i < hit_count; ++i)
+        interactive |= hits[i].kind == H_FIELD && hits[i].arg == index;
+    assert(interactive == !disabled); /* Touch and browse-knob targets share this list. */
+    if (disabled) {
+        int pad = config.groups[0].rules[0].pad;
+        change_field(index);
+        assert(config.groups[0].rules[0].pad == pad && !keyboard);
+    }
+}
 int main(void)
 {
     az_core_v1 core = {.size = sizeof core,
@@ -184,10 +200,26 @@ int main(void)
     press_action(A_NEW_RULE);
     assert(config.groups[0].rule_count == 1 && view == RULE);
     assert(cues_settings_config()->group_count == 0 && events == 0);
+    check_pad_field(1, "*");
+    press_field("Occurrence");
+    assert(config.groups[0].rules[0].phrase_index == 1);
+    check_pad_field(0, NULL);
+    press_field("Hot cue pad");
+    assert(config.groups[0].rules[0].pad == 2);
+    for (int i = 0; i < 10; ++i) press_field("Occurrence");
+    assert(config.groups[0].rules[0].phrase_index == 0);
+    check_pad_field(1, "*");
+    press_field("Cue type");
+    check_pad_field(1, "-");
+    press_field("Cue type");
+    check_pad_field(1, "*");
     press_field("Anchor");
     assert(config.groups[0].rules[0].anchor == CUES_ABSOLUTE);
+    check_pad_field(0, NULL);
+    assert(config.groups[0].rules[0].pad == 2);
     press_field("Cue type");
     assert(config.groups[0].rules[0].cue_type == AZ_CUE_MEMORY);
+    check_pad_field(1, "-");
     press_field("Position (zero-based)");
     assert(keyboard && numeric);
     snprintf(key_buffer, sizeof key_buffer, "not-a-number");
@@ -212,10 +244,10 @@ int main(void)
     assert(!draft_pending && events == 1 && cues_settings_config()->group_count == 1);
     assert(!strcmp(cues_settings_config()->groups[0].rules[0].name, "AB"));
     cues_settings_tick();
-    assert(pending_op == CUES_STORE_SAVE && stored.groups[0].rule_count == 1);
+    assert(pending_save && stored.groups[0].rule_count == 1);
     completed_result = 1;
     cues_settings_tick();
-    assert(!dirty && !pending_op);
+    assert(!dirty && !pending_save);
     press_field("Cue type");
     assert(draft_pending && events == 1 &&
            cues_settings_config()->groups[0].rules[0].cue_type == AZ_CUE_MEMORY);
@@ -223,30 +255,27 @@ int main(void)
     press_action(A_DISCARD);
     assert(!draft_pending && config.groups[0].rules[0].cue_type == AZ_CUE_MEMORY && events == 1);
     go(FILES);
-    press_action(A_IMPORT);
-    assert(pending_op == CUES_STORE_IMPORT);
-    cues_config_default(&imported_config);
-    imported_config.group_count = 1;
-    cues_group_default(&imported_config.groups[0], &imported_config);
-    snprintf(imported_config.groups[0].name, sizeof imported_config.groups[0].name, "Imported");
-    completed_result = 1;
-    cues_settings_tick();
-    assert(draft_pending && !strcmp(config.groups[0].name, "Imported"));
-    assert(strcmp(cues_settings_config()->groups[0].name, "Imported"));
-    press_action(A_APPLY);
-    assert(events == 2 && !strcmp(cues_settings_config()->groups[0].name, "Imported"));
-    go(FILES);
-    press_action(A_IMPORT);
-    assert(pending_op == CUES_STORE_IMPORT);
+    press_action(A_SAVE);
+    assert(pending_save && !dirty);
+    assert(strstr(storage_status, "Saving"));
+    /* A newer applied draft must still be saved after the pending save finishes. */
     snprintf(config.groups[0].name, sizeof config.groups[0].name, "Newer draft");
     modified();
+    press_action(A_SAVE);
+    assert(dirty && events == 2);
+    assert(strstr(storage_status, "busy"));
+    assert(strcmp(stored.groups[0].name, "Newer draft"));
     completed_result = 1;
     cues_settings_tick();
-    assert(!strcmp(config.groups[0].name, "Newer draft") && events == 2);
-    assert(!strcmp(cues_settings_config()->groups[0].name, "Imported"));
-    press_action(A_DISCARD);
+    assert(pending_save && !strcmp(stored.groups[0].name, "Newer draft"));
+    completed_result = -1;
+    cues_settings_tick();
+    assert(!dirty && !pending_save);
+    press_action(A_SAVE);
+    assert(pending_save && events == 2);
     completed_result = 1;
     cues_settings_tick();
+    assert(!dirty && !pending_save);
     /* Deletion is staged and requires its own confirmation before Apply. */
     group_index = 0;
     go(GROUP);
@@ -301,7 +330,7 @@ int main(void)
     az_event click = {.kind = AZ_EV_CLICK};
     assert(screen.on_input(&click, NULL));
     assert(redraws > 0);
-    puts("Settings passed: staged Apply, discard/import, CRUD, text/numeric keyboard, knob, touch "
+    puts("Settings passed: staged Apply, discard/save, CRUD, text/numeric keyboard, knob, touch "
          "bounds and paging");
     return 0;
 }

@@ -15,7 +15,13 @@ void ta_gemm(int transpose_b, int rows, int columns, int inner,
              const float *a, int a_stride, const float *b, int b_stride,
              float *output, int output_stride);
 typedef struct ta_decoder ta_decoder;
+enum { TA_DECODE_DEFAULT = 0, TA_DECODE_AAC_ENCODED = 1 };
+typedef struct ta_decode_clock {
+    uint32_t kind, has_edit;
+    uint64_t decoder_leading_frames, edit_start_frames, presentation_frames;
+} ta_decode_clock;
 ta_decoder *ta_decode_open(const char *path, unsigned *rate, uint64_t *frames);
+void ta_decode_get_clock(ta_decoder *decoder, ta_decode_clock *clock);
 int64_t ta_decode_read(ta_decoder *decoder, int16_t *stereo, uint64_t frames);
 int ta_decode_seek(ta_decoder *decoder, uint64_t frame);
 void ta_decode_close(ta_decoder *decoder);

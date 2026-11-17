@@ -168,6 +168,14 @@ int main(void)
     cfg_delay = 45; cfg_attempts = 1;
     assert(mod->init(&core) == 0);
     assert(configured.delay_sec == 45 && configured.max_attempts == 1);
+    /* Future cores may append fields without changing ABI v1. The same mod
+     * binary consumes only its known prefix, independent of the core version. */
+    core.size = sizeof(core) + 64;
+    service.size = sizeof(service) + 64;
+    assert(mod->init(&core) == 0);
+    assert(configured.delay_sec == 45 && configured.max_attempts == 1);
+    core.size = sizeof(core);
+    service.size = sizeof(service);
     screen->on_enter(screen->user); paint();
     assert(strstr(drawn, "No saved login"));
     assert(g_forget_btn.w == 0);

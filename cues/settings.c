@@ -9,7 +9,7 @@
 static const az_core_v1 *C;
 static cues_config config, active_config;
 static void (*on_change)(void);
-static unsigned revision, active_revision, saved_revision;
+static unsigned active_revision, saved_revision;
 static int dirty, draft_pending, storage_ok;
 static char storage_status[160], runtime_status[160];
 static const az_screen_v1 screen;
@@ -34,15 +34,14 @@ enum {
     A_DELETE_RULE,
     A_CONFIRM_GROUP,
     A_CONFIRM_RULE,
-    A_IMPORT,
-    A_EXPORT,
     A_SAVE,
     A_APPLY,
     A_DISCARD
 };
 typedef struct {
     const char *label;
-    int kind;
+    const char *display;
+    int kind, disabled;
     void *value;
     const char *const *choices;
     int count, min, max, action, arg;
@@ -75,9 +74,6 @@ static void redraw(void)
 }
 static void modified(void)
 {
-    revision++;
-    if (!revision)
-        revision++;
     draft_pending = 1;
 }
 static void go(int next)
@@ -224,8 +220,11 @@ static void rebuild(void)
         choice_field("Rule enabled", &r->enabled, onoff, 2, 0);
         choice_field("Anchor", &r->anchor, anchor_names, 2, 0);
         choice_field("Cue type", &r->cue_type, cue_names, 2, AZ_CUE_HOT);
-        if (r->cue_type == AZ_CUE_HOT)
-            choice_field("Hot cue pad", &r->pad, pads, 8, 1);
+        choice_field("Hot cue pad", &r->pad, pads, 8, 1);
+        if (r->cue_type == AZ_CUE_MEMORY || cues_rule_auto_pad(r)) {
+            fields[field_count - 1].disabled = 1;
+            fields[field_count - 1].display = r->cue_type == AZ_CUE_MEMORY ? "-" : "*";
+        }
         if (r->anchor == CUES_PHRASE) {
             choice_field("Phrase type", &r->phrase_type, cues_phrase_names, 8, 0);
             choice_field("Occurrence", &r->phrase_index, indexes, 11, 0);
@@ -258,11 +257,9 @@ static void rebuild(void)
         choice_field("Units for new groups", &config.measures_in, unit_names, 3, 0);
         break;
     case FILES:
-        action(storage_status[0] ? storage_status : "USB configuration files", 0, 0);
+        action(storage_status[0] ? storage_status : "USB configuration", 0, 0);
         action("Apply and save changes", A_SAVE, 0);
         action("Discard draft changes", A_DISCARD, 0);
-        action("Import cue-rules-import.json", A_IMPORT, 0);
-        action("Export cue-rules-export.json", A_EXPORT, 0);
         break;
     case DELETE_GROUP:
         action("Confirm: delete this group", A_CONFIRM_GROUP, 0);
@@ -284,7 +281,7 @@ static const char *title(void)
     case GLOBAL:
         return "Configuration";
     case FILES:
-        return "Import / Export";
+        return "USB configuration";
     case DELETE_GROUP:
         return "Delete group and all its rules?";
     case DELETE_RULE:
@@ -319,14 +316,13 @@ static void open_keyboard(field f)
         snprintf(key_buffer, sizeof key_buffer, "%.9g", *(double *)f.value);
     redraw();
 }
-static void request_file(int operation)
+static void request_save(void)
 {
-    int rc =
-        cues_store_request(operation, operation == CUES_STORE_IMPORT ? &config : &active_config,
-                           operation == CUES_STORE_IMPORT ? revision : active_revision);
+    int rc = cues_store_request(&active_config, active_revision);
+    if (rc > 0)
+        dirty = 0;
     snprintf(storage_status, sizeof storage_status, "%s",
-             rc > 0    ? operation == CUES_STORE_IMPORT ? "Importing USB JSON..."
-                                                        : "Exporting USB JSON..."
+             rc > 0    ? "Saving rules to USB..."
              : rc == 0 ? "Storage busy; try again shortly"
                        : "SDK storage unavailable");
 }
@@ -400,15 +396,9 @@ static void activate_action(int id, int arg)
         modified();
         go(RULES);
         break;
-    case A_IMPORT:
-        request_file(CUES_STORE_IMPORT);
-        break;
-    case A_EXPORT:
-        request_file(CUES_STORE_EXPORT);
-        break;
     case A_SAVE:
         if (apply_changes())
-            request_file(CUES_STORE_SAVE);
+            request_save();
         break;
     case A_APPLY:
         apply_changes();
@@ -416,7 +406,6 @@ static void activate_action(int id, int arg)
     case A_DISCARD:
         config = active_config;
         draft_pending = 0;
-        revision++;
         go(GROUPS);
         break;
     }
@@ -426,6 +415,8 @@ static void change_field(int index)
     if (index < 0 || index >= field_count)
         return;
     field f = fields[index];
+    if (f.disabled)
+        return;
     if (f.kind == F_ACTION) {
         activate_action(f.action, f.arg);
         return;
@@ -594,7 +585,9 @@ static void draw(az_draw *d, az_rect a, void *unused)
         label(d, (az_rect){left, y, lw - 10, 44}, f.label, compact ? 12 : 15,
               color(AZ_COL_TEXT_DIM));
         char value[160];
-        if (f.kind == F_TEXT)
+        if (f.display)
+            snprintf(value, sizeof value, "%s", f.display);
+        else if (f.kind == F_TEXT)
             snprintf(value, sizeof value, "%s",
                      ((char *)f.value)[0] ? (char *)f.value : "Any / empty");
         else if (f.kind == F_DOUBLE)
@@ -603,7 +596,15 @@ static void draw(az_draw *d, az_rect a, void *unused)
             snprintf(value, sizeof value, "%s", f.choices[*(int *)f.value - f.min]);
         else
             snprintf(value, sizeof value, "%d", *(int *)f.value);
-        button(d, (az_rect){left + lw, y, content - lw, 44}, value, H_FIELD, i, 0);
+        if (f.disabled) {
+            C->fill_rect(d, left + lw, y, content - lw, 44,
+                         blend(color(AZ_COL_BG), color(AZ_COL_TEXT), 3));
+            C->draw_rect(d, left + lw, y, content - lw, 44, 1,
+                         blend(color(AZ_COL_BG), color(AZ_COL_TEXT), 12));
+            label(d, (az_rect){left + lw + 10, y, content - lw - 20, 44}, value,
+                  content - lw < 80 ? 12 : 14, color(AZ_COL_TEXT_DIM));
+        } else
+            button(d, (az_rect){left + lw, y, content - lw, 44}, value, H_FIELD, i, 0);
     }
     int fy = a.y + a.h - 48, bw = compact ? 52 : 92;
     button(d, (az_rect){left, fy, bw, 44}, "Back", H_BACK, 0, 0);
@@ -739,7 +740,7 @@ const az_screen_v1 *cues_settings_init(const az_core_v1 *core, void (*changed)(v
 {
     C = core;
     on_change = changed;
-    revision = active_revision = saved_revision = 1;
+    active_revision = saved_revision = 1;
     dirty = draft_pending = 0;
     runtime_status[0] = 0;
     storage_status[0] = 0;
@@ -767,33 +768,20 @@ void cues_settings_status(const char *status)
 }
 void cues_settings_tick(void)
 {
-    int operation;
     unsigned completed;
-    static cues_config imported;
     char status[160];
-    int result = cues_store_take(&imported, &operation, &completed, status, sizeof status);
+    int result = cues_store_take(&completed, status, sizeof status);
     if (result) {
         snprintf(storage_status, sizeof storage_status, "%s", status);
-        if (result > 0 && operation == CUES_STORE_SAVE) {
+        if (result > 0) {
             saved_revision = completed;
             dirty = active_revision != saved_revision;
-        } else if (result > 0 && operation == CUES_STORE_IMPORT) {
-            if (completed != revision)
-                snprintf(storage_status, sizeof storage_status,
-                         "Import discarded: settings changed during read");
-            else {
-                config = imported;
-                keyboard = 0;
-                view = GROUPS;
-                page = 0;
-                modified();
-            }
-        } else if (result < 0 && operation == CUES_STORE_SAVE)
+        } else
             dirty = 0;
         redraw();
     }
     if (dirty && storage_ok) {
-        int rc = cues_store_request(CUES_STORE_SAVE, &active_config, active_revision);
+        int rc = cues_store_request(&active_config, active_revision);
         if (rc > 0) {
             dirty = 0;
             snprintf(storage_status, sizeof storage_status, "Saving rules to USB...");

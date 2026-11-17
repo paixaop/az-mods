@@ -17,17 +17,38 @@ Each rule selects:
 - **Absolute:** a zero-based position in seconds, beats or bars.
 - A saved loop with a fixed length, or, for Phrase rules, from the phrase start / to its end.
 
+For hot cues with **Occurrence → All**, **Hot cue pad** displays `*`. Each matching occurrence takes the next free pad in A–H order, within the configured pad limit. Numbered occurrences and Absolute rules use the selected fixed pad. Memory cues show a disabled pad field because they do not use hot pads.
+
 Seconds begin at the file start. Beat zero is the first observed grid beat; bar zero is its first observed downbeat. Fractional positions follow measured boundaries. Beat/bar calculations follow grid tempo and downbeats rather than assuming four beats per bar. Missing boundaries are skipped. Quantization is Off, nearest Beat or nearest Bar; ties choose the earlier boundary. Phrase labels use the SDK's raw analysis kinds, mapped consistently with Anchor.
 
 `{phrase}` and `{length}` are available in cue names/comments. The length uses the group's selected measures. The native SDK has one cue comment field, so name and comment are combined into that field, bounded to 127 UTF-8 bytes. Global collision preference resolves competing hot/memory candidates; other conflicts use group/rule order. Limits cannot exceed eight hot pads and ten memory cues.
 
 The editor has touch controls, browse-knob navigation and an on-screen keyboard. Smaller menu areas page the fields. Genre/rating filters and stem controls are omitted because they are not supported by this mod's SDK data model.
 
-Applied configuration is saved by a worker to `data/cue-rules.json` on the installation USB. **Files** imports `data/cue-rules-import.json` as a draft and exports applied settings to `data/cue-rules-export.json`. Apply the imported draft to activate it. [An example](examples/cue-rules.json) combines an Intro hot cue, a pre-drop loop and a memory cue at file start; copy it to the import filename to edit it on the deck. Import is bounded to 128 KiB, validates all values atomically and rejects unsupported rule types or fields. USB removal leaves the applied in-memory configuration available; the Files page reports save failures.
+Applied configuration is saved by a worker to `MODS/community-mods/cues/data/cue-rules.json` on the installation USB. With the USB mounted at `/media/usb/sda1`, the full path is:
+
+```text
+/media/usb/sda1/MODS/community-mods/cues/data/cue-rules.json
+```
+
+Copy this file to keep a backup or share rules. To restore or edit rules outside the deck, replace the file while Cues is stopped, then restart AZ-MODS or the deck to load it. Loading is bounded to 128 KiB, validates all values atomically and rejects unsupported rule types or fields. An invalid file leaves Cues using its default configuration and reports the error. USB removal leaves the applied in-memory configuration available; **Files** shows save status and provides **Apply and save changes** and **Discard draft changes**.
+
+The [default rules file](examples/cue-rules.json) enables automatic placement for all genres, with no artist/key filters and the full supported BPM range (1–500). Save it as `cue-rules.json` at the location above. It contains:
+
+- Hot A at the exact start of the track (zero seconds).
+- A hot cue at the start of every Chorus/Drop, allocated to the next available pad.
+- A memory cue 16 bars before the end of every Chorus/Drop.
+- A memory cue 32 bars before the end of every Chorus/Drop.
+
+Offsets follow the measured bar grid and may fall before the chorus starts. The preset gives hot cues priority: a memory cue at the same position is skipped, such as 32 bars before the end of a 32-bar chorus. Positions before the track starts or outside the available grid are skipped. The eight-hot-pad and ten-memory-cue limits still apply. The file is an optional starting preset; it does not replace existing settings automatically.
 
 Manual replacement performs revision-fenced SDK deletions followed by creation. These are separate persistent writes. An error can leave partial changes; they cannot be rolled back atomically. An uncertain result stops further work on that load until the track is reloaded. Cues saves definitions in the deck's native cue store while preserving playback, the playhead and the working loop. It never triggers or recalls a cue, or engages a saved loop.
 
 Requires AZ-MODS 1.2.8 or newer **with the SDK `AZ_CMD_CUE_POINT_SET` / `AZ_CMD_CUE_LOOP_SET` capabilities**. A core without those commands can display the editor but cannot place cues.
+The current core starts cue services by default. On older development builds,
+enable the core's track-data, native-load and native-cue-command services before
+starting the firmware. `azmod.native-cue-commands.off` disables cue commands in
+the current core; this is separate from **Apply on track load** in Cues settings.
 
 Open **Community Mods > Installed > Cues > Settings** to slide the editor across the
 full content area. BACK closes an editor subpage first, then returns to the mod list.
@@ -42,3 +63,11 @@ make test
 ```
 
 See [TESTING.md](TESTING.md) for validation and firmware acceptance limits. Developer previews require Python with Pillow and run with `python3 tools/preview_settings.py`.
+
+Cues accepts a native loaded track without a USB library reference, including
+streaming loads. Writes still require the matching native load generation and cue
+revision. Metadata filters only use qualified fields; unavailable metadata cannot
+match a filter. Version 0.1.3 waits for a nonempty phrase map when a matching rule
+needs phrases, including when Absolute rules could already run. An empty map
+published during loading cannot consume automatic placement with a partial cue
+bank. Absolute-only rules can still run without phrase analysis.

@@ -9,7 +9,8 @@
 #define MINIAUDIO_IMPLEMENTATION
 #include "miniaudio.h"
 #include "PortableDSP.h"
-struct ta_decoder { ma_decoder decoder; uint64_t prefix, position; };
+#include "aac.h"
+struct ta_decoder { ma_decoder decoder; ta_aac *aac; uint64_t prefix, position; };
 struct ta_mpeg_frame { unsigned rate, mode, bytes; };
 static int ta_mpeg_header(const unsigned char h[4], struct ta_mpeg_frame *f) {
     static const unsigned rates[] = {44100, 48000, 32000};
@@ -70,8 +71,19 @@ static int ta_mpeg_timeline(const char *path, uint64_t *frames, uint64_t *prefix
 ta_decoder *ta_decode_open(const char *path, unsigned *rate, uint64_t *frames) {
     ta_decoder *d = calloc(1, sizeof *d);
     if (!d) return NULL;
+    /* MP3 probes scan for sync words inside arbitrary bytes. Recognize AAC
+     * containers first, before compressed AAC payload can resemble MP3. */
+    if (ta_aac_candidate(path)) {
+        d->aac = ta_aac_open(path, rate, frames);
+        if (d->aac) return d;
+        free(d); return NULL;
+    }
     ma_decoder_config config = ma_decoder_config_init(ma_format_s16, 2, 0);
-    if (ma_decoder_init_file(path, &config, &d->decoder) != MA_SUCCESS) { free(d); return NULL; }
+    if (ma_decoder_init_file(path, &config, &d->decoder) != MA_SUCCESS) {
+        d->aac = ta_aac_open(path, rate, frames);
+        if (d->aac) return d;
+        free(d); return NULL;
+    }
     if (d->decoder.pBackendVTable == &g_ma_decoding_backend_vtable_mp3) {
         uint64_t raw = 0;
         if (!ta_mpeg_timeline(path, &raw, &d->prefix)) {
@@ -104,6 +116,7 @@ ta_decoder *ta_decode_open(const char *path, unsigned *rate, uint64_t *frames) {
     return d;
 }
 int64_t ta_decode_read(ta_decoder *d, int16_t *stereo, uint64_t frames) {
+    if (d->aac) return ta_aac_read(d->aac, stereo, frames);
     uint64_t leading = d->position < d->prefix ? d->prefix - d->position : 0;
     if (leading > frames) leading = frames;
     memset(stereo, 0, (size_t)leading * 2 * sizeof *stereo);
@@ -114,9 +127,19 @@ int64_t ta_decode_read(ta_decoder *d, int16_t *stereo, uint64_t frames) {
     return rc == MA_SUCCESS || rc == MA_AT_END ? (int64_t)(read + leading) : -1;
 }
 int ta_decode_seek(ta_decoder *d, uint64_t frame) {
+    if (d->aac) return ta_aac_seek(d->aac, frame);
     uint64_t decoded = frame > d->prefix ? frame - d->prefix : 0;
     if (ma_decoder_seek_to_pcm_frame(&d->decoder, decoded) != MA_SUCCESS) return -1;
     d->position = frame;
     return 0;
 }
-void ta_decode_close(ta_decoder *d) { if (d) { ma_decoder_uninit(&d->decoder); free(d); } }
+void ta_decode_get_clock(ta_decoder *d, ta_decode_clock *clock) {
+    memset(clock, 0, sizeof *clock);
+    if (d->aac) ta_aac_timeline(d->aac, clock);
+}
+void ta_decode_close(ta_decoder *d) {
+    if (d) {
+        if (d->aac) ta_aac_close(d->aac); else ma_decoder_uninit(&d->decoder);
+        free(d);
+    }
+}

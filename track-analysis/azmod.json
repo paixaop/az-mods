@@ -2,15 +2,17 @@
   "azmod": 1,
   "id": "track-analysis",
   "name": "Track Analysis",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "author": "pedro",
-  "summary": "Generate missing track phrases on the deck and save them to USB.",
-  "description": "Runs the DJTrackAnalysis beat and phrase algorithm in a background process for USB OneLibrary tracks without saved phrases. Preserves populated grids, phrases, cues and waveform data. Requires the core analysis publication service. This development version supports MP3, FLAC and WAV files, including library tracks with no previous ANLZ location. Streaming, folder-only tracks and native phrase-display refresh are not yet supported.",
+  "summary": "Generate missing phrases for loaded USB and Beatport tracks.",
+  "description": "Analyzes missing phrases in a background process using the loaded track’s native beat grid. Supports USB OneLibrary tracks and completed Beatport downloads, including AAC-LC M4A audio. Publishes phrases to the native display immediately so phrase-aware mods can react during the same load. Preserves populated grids, phrases, cues and waveforms. Requires the loaded-track analysis SDK service, currently qualified on firmware 2.00. Folder-only tracks, encrypted media and HE-AAC are unsupported.",
   "license": "GPL-3.0-only",
   "source": "https://github.com/paixaop/az-mods/tree/main/track-analysis",
   "category": "tools",
   "api": 1,
-  "firmware": ["any"],
+  "firmware": [
+    "ep147-9e9454e357389ece"
+  ],
   "hooks": false,
-  "min_core": "1.2.6"
+  "min_core": "1.2.8"
 }

@@ -1,4 +1,5 @@
 /* SPDX-License-Identifier: GPL-3.0-only */
+#define _GNU_SOURCE
 #define _POSIX_C_SOURCE 200809L
 #include "azmod-mod.h"
 #include <stdatomic.h>
@@ -25,7 +26,7 @@ static struct work {
     atomic_int cancelled;
     az_track_ref track;
     uint64_t epoch;
-    int result;
+    int deck, result;
 } work[4];
 static char status_text[4][96];
 static unsigned pending_links; /* worker-only; native spool waits for playback to stop */
@@ -61,16 +62,31 @@ static void deck_status(const az_deck_status_event_v1 *event, void *user) {
     d->loaded = event->load_epoch &&
         field_ready(&load->header, AZ_STATUS_LOAD_STATE, &load->state_info, event->load_epoch) &&
         load->state_info.info.provenance == AZ_PROV_NATIVE &&
-        load->state == AZ_STATUS_LOAD_LOADED &&
-        load->track_info.scope == AZ_STATUS_LOAD_SCOPE &&
-        field_ready(&load->header, AZ_STATUS_LOAD_TRACK, &load->track_info, event->load_epoch);
-    if (d->loaded) d->track = load->track;
-    else { d->attempted = 0; atomic_store(&work[deck].cancelled, 1); }
+        load->state == AZ_STATUS_LOAD_LOADED;
+    memset(&d->track, 0, sizeof d->track);
+    if (d->loaded && load->track_info.scope == AZ_STATUS_LOAD_SCOPE &&
+        field_ready(&load->header, AZ_STATUS_LOAD_TRACK, &load->track_info, event->load_epoch)) d->track = load->track;
+    if (!d->loaded) { d->attempted = 0; atomic_store(&work[deck].cancelled, 1); }
 }
 static int close_job(uint64_t job) {
     int rc;
     do { rc = L->analysis_close(ID, job); if (rc == AZ_BUSY) pause_worker(); } while (rc == AZ_BUSY);
     return rc;
+}
+/* Native firmware can spawn children while this worker is extracting. A
+ * child must never inherit the executable's writable descriptor (ETXTBSY). */
+static int private_temp(char *path) {
+#ifdef __linux__
+    return mkostemp(path, O_CLOEXEC);
+#else
+    int fd = mkstemp(path);
+    if (fd >= 0 && fcntl(fd, F_SETFD, FD_CLOEXEC)) {
+        close(fd);
+        unlink(path);
+        return -1;
+    }
+    return fd;
+#endif
 }
 /* Keep the package below the installer's 16 MiB ceiling. Inflate only on the
  * worker thread, into a private sibling; failed extraction never launches. */
@@ -79,7 +95,7 @@ static int prepare_program(const char *assets, const char *data, char program[12
     if (snprintf(program, 1200, "%s/track-analysis-worker", data) >= 1200 ||
         snprintf(packed, sizeof packed, "%s/track-analysis-worker.gz", assets) >= (int)sizeof packed ||
         snprintf(staging, sizeof staging, "%s.tmp-XXXXXX", program) >= (int)sizeof staging) return 0;
-    int fd = mkstemp(staging), ok = fd >= 0;
+    int fd = private_temp(staging), ok = fd >= 0;
     if (ok) ok = ta_unpack_worker(packed, fd);
     if (fd >= 0) {
         if (ok && fchmod(fd, 0700)) {
@@ -96,13 +112,17 @@ static int prepare_program(const char *assets, const char *data, char program[12
 }
 static int analyze(struct work *job) {
     az_analysis_job_v1 input = {.size = sizeof input};
-    int rc = L->analysis_open(ID, &job->track, &input);
+    int rc = L->analysis_open_loaded(ID, job->deck, job->epoch, &input);
+    static int last_open[4] = {INT32_MIN, INT32_MIN, INT32_MIN, INT32_MIN};
+    if (AZ_HAS(C, log) && last_open[job->deck] != rc) {
+        C->log(ID, "deck %d load %llu analysis lease: %d", job->deck + 1, (unsigned long long) job->epoch, rc);
+        last_open[job->deck] = rc;
+    }
     if (rc == AZ_NOT_FOUND) pending_link(&input);
     if (rc) return rc;
     if (input.version != AZ_DATA_VERSION || input.size < sizeof input || !input.job ||
         !(input.needed & AZ_DATA_PHRASES) || (input.needed & ~(AZ_DATA_GRID | AZ_DATA_PHRASES)) ||
-        input.track.source_id != job->track.source_id || input.track.source_generation != job->track.source_generation ||
-        input.track.library_id != job->track.library_id || input.track.track_id != job->track.track_id ||
+        !(input.flags & AZ_ANALYSIS_LOADED) ||
         !memchr(input.audio_path, 0, sizeof input.audio_path) || !memchr(input.analysis_path, 0, sizeof input.analysis_path)) {
         if (input.job) close_job(input.job);
         return AZ_FAILED;
@@ -117,14 +137,15 @@ static int analyze(struct work *job) {
     }
     if (!prepare_program(assets, data, program)) { close_job(input.job); return AZ_FAILED; }
     /* A unique output name cannot consume a previous process's crash residue. */
-    int output_fd = mkstemp(output);
+    int output_fd = private_temp(output);
     if (output_fd < 0) { close_job(input.job); return AZ_FAILED; }
     int output_ok = close(output_fd) == 0;
     if (unlink(output)) output_ok = 0;
     if (!output_ok) { close_job(input.job); return AZ_FAILED; }
     snprintf(bpm, sizeof bpm, "%.8f", input.original_bpm);
     const char *saved_grid = (input.needed & AZ_DATA_GRID) ? "-" : input.analysis_path;
-    const char *argv[] = {program, input.audio_path, saved_grid, bpm, output, models, NULL};
+    /* launch supplies argv[0]; only pass the worker's five arguments. */
+    const char *argv[] = {input.audio_path, saved_grid, bpm, output, models, NULL};
     az_launch_opts opts = {.size = sizeof opts, .nice = 19, .mem_mb = 512, .log_path = log};
     int pid = C->launch(ID, program, argv, &opts);
     rc = AZ_FAILED;
@@ -156,6 +177,7 @@ static int analyze(struct work *job) {
         } else rc = AZ_STALE;
     }
     unlink(output);
+    if (AZ_HAS(C, log)) C->log(ID, "deck %d load %llu analysis result: %d", job->deck + 1, (unsigned long long) job->epoch, rc);
     if (rc == AZ_OK) pending_link(&input);
     if (rc != AZ_OK) close_job(input.job);
     return rc;
@@ -188,7 +210,7 @@ static void tick(void) {
         int phase = atomic_load(&job->phase);
         if (phase == 3) {
             if (job->epoch == d->epoch) {
-                const char *message = job->result == AZ_OK ? "Phrases saved to USB" :
+                const char *message = job->result == AZ_OK ? "Phrase analysis ready" :
                     job->result == AZ_NOT_FOUND ? "Already has phrases" :
                     job->result == AZ_UNSUPPORTED ? "Unsupported audio or media source" :
                     job->result == AZ_STALE ? "Source changed or analysis cancelled" : "Analysis failed; see analysis.log";
@@ -200,7 +222,7 @@ static void tick(void) {
         }
         if (!C->row_value(enabled_row)) { atomic_store(&job->cancelled, 1); d->attempted = 0; continue; }
         if (!phase && d->loaded && d->epoch && d->attempted != d->epoch) {
-            job->track = d->track; job->epoch = d->epoch; d->attempted = d->epoch;
+            job->track = d->track; job->epoch = d->epoch; job->deck = deck; d->attempted = d->epoch;
             atomic_store(&job->cancelled, 0);
             snprintf(status_text[deck], sizeof status_text[deck], "Deck %d: Checking phrase analysis", deck + 1);
             atomic_store(&job->phase, 1);
@@ -212,7 +234,7 @@ static void draw(az_draw *draw, az_rect area, void *user) {
     C->draw_text(draw, area.x + 16, area.y + 16, "Track Analysis", 26, C->color(AZ_COL_TEXT));
     for (int deck = 0; deck < 4; deck++)
         C->draw_text(draw, area.x + 16, area.y + 64 + deck * 38,
-            status_text[deck][0] ? status_text[deck] : "Waiting for a USB library track", 20, C->color(AZ_COL_TEXT_DIM));
+            status_text[deck][0] ? status_text[deck] : "Waiting for a USB or Beatport track", 20, C->color(AZ_COL_TEXT_DIM));
 }
 static int init(const az_core_v1 *core) {
     if (!core || core->abi != AZ_MOD_ABI || !AZ_HAS(core, library_service) || !AZ_HAS(core, thread_start) ||
@@ -220,19 +242,19 @@ static int init(const az_core_v1 *core) {
         !AZ_HAS(core, register_row) || !AZ_HAS(core, register_screen) || !AZ_HAS(core, assets_dir) ||
         !AZ_HAS(core, data_dir) || !AZ_HAS(core, banner) || !AZ_HAS(core, lib_spool_kick)) return -1;
     C = core; L = C->library_service(AZ_LIBRARY_ABI);
-    if (!AZ_LIB_HAS(L, analysis_open) || !AZ_LIB_HAS(L, analysis_commit) || !AZ_LIB_HAS(L, analysis_close) ||
+    if (!AZ_LIB_HAS(L, analysis_open_loaded) || !AZ_LIB_HAS(L, analysis_commit) || !AZ_LIB_HAS(L, analysis_close) ||
         !AZ_LIB_HAS(L, on_deck_status) || !AZ_LIB_HAS(L, deck_status_release)) return -2;
     az_row_v1 row = {.size = sizeof row, .key = "enabled", .label = "Track Analysis", .kind = AZ_ROW_TOGGLE,
-        .flags = AZ_ROW_DEFAULT_ON, .help = "Generate missing USB phrase analysis automatically on track load."};
+        .flags = AZ_ROW_DEFAULT_ON, .help = "Generate missing phrase analysis automatically for USB and Beatport tracks."};
     enabled_row = C->register_row(ID, &row);
     if (enabled_row < 0) return -3;
-    az_screen_v1 screen = {.size = sizeof screen, .on_draw = draw};
+    static const az_screen_v1 screen = {.size = sizeof screen, .on_draw = draw};
     if (C->register_screen(ID, &screen)) return -4;
     az_deck_watch_v1 watch = {.size = sizeof watch, .version = AZ_DATA_VERSION,
-        .deck_mask = AZ_STATUS_ALL_DECKS, .topics = AZ_STATUS_TOPIC(AZ_STATUS_LOAD)};
+        .deck_mask = AZ_STATUS_ALL_DECKS, .topics = AZ_STATUS_TOPIC(AZ_STATUS_LOAD) | AZ_STATUS_TOPIC(AZ_STATUS_GRID) | AZ_STATUS_TOPIC(AZ_STATUS_PHRASES)};
     if (L->on_deck_status(ID, &watch, deck_status, NULL, &subscription)) return -5;
     return C->thread_start(ID, "track-analysis", worker, NULL) ? -6 : 0;
 }
-static const char *const firmware[] = {"any", NULL};
+static const char *const firmware[] = {"ep147-9e9454e357389ece", NULL};
 static const az_mod_v1 mod = {.abi = AZ_MOD_ABI, .size = sizeof mod, .id = ID, .fw_tags = firmware, .init = init, .tick = tick};
 AZ_MOD_EXPORT const az_mod_v1 *az_mod_v1_entry(void) { return &mod; }

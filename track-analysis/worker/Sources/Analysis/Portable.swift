@@ -5,7 +5,6 @@ import FoundationEssentials
 import Foundation
 #endif
 import PortableDSP
-import PortableDSP
 
 let CblasRowMajor: Int32 = 101, CblasNoTrans: Int32 = 111, CblasTrans: Int32 = 112
 func cblas_sgemv(_ order: Int32, _ transpose: Int32, _ rows: Int32, _ columns: Int32,
@@ -27,12 +26,18 @@ final class PCMDecoder {
     let handle: OpaquePointer
     let rate: Int
     let frameCount: Int
+    /// AAC returns an encoded access-unit clock. Container edits remain explicit
+    /// until the caller maps them to the deck's native source clock.
+    let clock: ta_decode_clock
     init(url: URL) throws {
         var rate: UInt32 = 0, frames: UInt64 = 0
         guard let handle = ta_decode_open(url.path, &rate, &frames), frames > 1 else {
             throw AnalysisError.decodingFailed("Unsupported, invalid or over-20-minute audio")
         }
         self.handle = handle; self.rate = Int(rate); frameCount = Int(frames)
+        var clock = ta_decode_clock()
+        ta_decode_get_clock(handle, &clock)
+        self.clock = clock
     }
     deinit { ta_decode_close(handle) }
     func read(frames: Int = 16384) throws -> [Int16]? {

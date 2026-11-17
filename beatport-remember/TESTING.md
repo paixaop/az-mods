@@ -76,3 +76,18 @@ these cases on supported firmware before publishing:
 Old test notes for 0.1.x used synthetic credentials and did not establish a
 complete successful login round trip. Their no-crash observations do not
 validate the 0.3.0 service implementation; retain new evidence per build.
+
+On 2026-11-16, the 0.3.0 mod and updated core completed automatic login from the
+existing credential store after three native-player restarts on the physical
+deck. The core's visibility gate deferred autofill until the login screen was
+actually open. The native UI showed Beatport Connected, and authenticated catalog
+tracks loaded and played through SDK controls. The original credential file was
+preserved; capture of a changed login and Forget were not retested in this run.
+No crash trace appeared during acceptance. The preceding reported 1.2.9 outage
+had no surviving fault trace, so its cause remains undetermined.
+
+The compatibility fixture also accepts larger append-only ABI-v1 core/service
+tables and rejects missing, truncated or unknown services. This validates the mod's
+supported-prefix checks; future core and firmware implementations still need their
+own qualification. Evidence is retained in the parent workspace under
+`temp/physical-auto-20261116/`.

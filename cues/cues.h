@@ -21,6 +21,12 @@ typedef struct {
     double position, offset, loop_length;
     char name[64], comment[128];
 } cues_rule;
+/* All phrase occurrences use the next free hot pad; pad is otherwise fixed. */
+static inline int cues_rule_auto_pad(const cues_rule *rule)
+{
+    return rule->cue_type == AZ_CUE_HOT && rule->anchor == CUES_PHRASE &&
+           rule->phrase_index == 0;
+}
 typedef struct {
     int enabled, quantization, measures_in, rule_count;
     double min_bpm, max_bpm; /* zero inherits global range */

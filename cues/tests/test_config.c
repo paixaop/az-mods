@@ -34,6 +34,7 @@ int main(void)
             cues_rule_default(r, g);
             r->anchor = j % 2;
             r->phrase_type = 1;
+            r->phrase_index = r->anchor == CUES_PHRASE ? 1 : 0;
             r->position = r->anchor == CUES_ABSOLUTE ? j * 8 : 0;
             r->pad = j % 8 + 1;
             r->color = j % 9;
@@ -77,6 +78,23 @@ int main(void)
     assert(cues_config_parse(&parsed, source, strlen(source), error, sizeof error));
     assert(parsed.groups[0].rules[0].phrase_type == 3 &&
            parsed.groups[0].rules[0].loop_mode == CUES_LOOP_TO_END);
+    const char *automatic =
+        "{\"config\":{},\"groups\":[{\"name\":\"All\",\"rules\":[{\"data\":{"
+        "\"pad\":\"*\",\"anchor\":{\"type\":\"phrase\",\"phrases\":[{\"type\":\"Chorus/Drop\","
+        "\"index\":\"All\"}]},\"type\":\"hot\"}}]}]}";
+    assert(cues_config_parse(&parsed, automatic, strlen(automatic), error, sizeof error));
+    assert(cues_rule_auto_pad(&parsed.groups[0].rules[0]));
+    n = cues_config_json(&parsed, json, sizeof json);
+    assert(n > 0 && strstr(json, "\"pad\":\"*\""));
+    cues_config round_trip = parsed;
+    assert(cues_config_parse(&parsed, json, (size_t)n, error, sizeof error));
+    assert(!memcmp(&parsed, &round_trip, sizeof parsed));
+    rejected("{\"config\":{},\"groups\":[{\"rules\":[{\"data\":{\"type\":\"hot\",\"pad\":\"*\","
+             "\"anchor\":{\"type\":\"absolute\",\"absolute\":{\"value\":0,\"unit\":\"seconds\"}}}}]}]}");
+    rejected("{\"config\":{},\"groups\":[{\"rules\":[{\"data\":{\"type\":\"hot\",\"pad\":\"*\","
+             "\"anchor\":{\"type\":\"phrase\",\"phrases\":[{\"type\":\"Intro\",\"index\":\"1\"}]}}}]}]}");
+    rejected("{\"config\":{},\"groups\":[{\"rules\":[{\"data\":{\"type\":\"memory\",\"pad\":\"*\","
+             "\"anchor\":{\"type\":\"phrase\",\"phrases\":[{\"type\":\"Intro\",\"index\":\"All\"}]}}}]}]}");
     /* Deterministic malformed-input sweep checks atomic rejection and token bounds. */
     for (unsigned i = 0; i < 1000; i++) {
         char garbage[128];

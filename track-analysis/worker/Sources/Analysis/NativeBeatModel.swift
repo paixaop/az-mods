@@ -75,7 +75,7 @@ enum NativeBeatModel {
         let arguments = CommandLine.arguments
         let directory: String
         if let configured = getenv("TRACK_ANALYSIS_MODELS") { directory = String(cString: configured) }
-        else if arguments.count == 6 { directory = arguments[5] }
+        else if arguments.count == 6 || arguments.count == 7 { directory = arguments[5] }
         else { throw Failure.resource("Set TRACK_ANALYSIS_MODELS for library tests") }
         let url = URL(fileURLWithPath: directory).appendingPathComponent(name + ".plist")
         return try PropertyListDecoder().decode([String: Tensor].self, from: Data(contentsOf: url))

@@ -180,11 +180,10 @@ static void deck_status(const az_deck_status_event_v1 *e, void *user) {
     const az_status_load_v1 *load = v->load;
     if (!e->load_epoch ||
         !topic_valid(load ? &load->header : NULL, sizeof *load) ||
-        !ready(e, &load->header, AZ_STATUS_LOAD_TRACK, &load->track_info) ||
         !(ready(e, &load->header, AZ_STATUS_LOAD_STATE, &load->state_info) ||
           unit_ready(&load->header, AZ_STATUS_LOAD_STATE, &load->state_info)) ||
         load->state_info.info.provenance != AZ_PROV_NATIVE ||
-        load->state != AZ_STATUS_LOAD_LOADED || !load->track.track_id) {
+        load->state != AZ_STATUS_LOAD_LOADED) {
         if (d->loaded) {
             invalidate_plan(d);
             ++d->revision;
@@ -192,16 +191,16 @@ static void deck_status(const az_deck_status_event_v1 *e, void *user) {
         d->loaded = 0;
         return;
     }
-    if (!same_track(&d->track.track, &load->track)) {
-        invalidate_plan(d);
-        d->track.track = load->track;
-        d->track.metadata = (az_track_metadata){
-            .size = sizeof(az_track_metadata), .version = AZ_DATA_VERSION};
-        d->track.beat_count = d->track.phrase_count = 0;
-        d->grid_revision = d->phrase_revision = 0;
-        d->head_rate = 0;
-        ++d->revision;
-    }
+    /* Native commands target the load epoch, including streaming loads with
+     * no USB library reference. A qualified reference is only needed to join
+     * unit-scoped metadata; never infer one from a native content ID. */
+    int qualified = ready(e, &load->header, AZ_STATUS_LOAD_TRACK,
+                          &load->track_info) &&
+                    same_track(&load->track, &load->track);
+    az_track_ref track = qualified ? load->track : (az_track_ref){0};
+    int reference_changed = (qualified || d->track.track.track_id) &&
+                            !same_track(&d->track.track, &track);
+    if (reference_changed) d->track.track = track;
     d->loaded = 1;
     const az_status_cues_v1 *live = v->cues;
     int live_count = 0,
@@ -241,7 +240,7 @@ static void deck_status(const az_deck_status_event_v1 *e, void *user) {
     az_track_metadata meta = {.size = sizeof meta, .version = AZ_DATA_VERSION};
     const az_status_metadata_v1 *m = v->metadata;
     if (topic_valid(m ? &m->header : NULL, sizeof *m)) {
-        int unit_metadata =
+        int unit_metadata = qualified &&
             unit_ready(&m->header, AZ_STATUS_METADATA_CONTENT_ID,
                        &m->content_id_info) &&
             m->content_id == load->track.track_id;
@@ -297,9 +296,14 @@ static void deck_status(const az_deck_status_event_v1 *e, void *user) {
         strcmp(meta.format, old->format) ||
         meta.original_bpm != old->original_bpm ||
         ((meta.valid & AZ_META_DURATION) && duration != AZ_TIME_EQUAL);
-    if (metadata_changed) {
+    if (metadata_changed || reference_changed) {
         *old = meta;
         ++d->revision;
+        /* Metadata can be enriched after the first native write. Finish that
+         * selected plan on this same load instead of abandoning a partial
+         * bank. Map, cue, configuration and native-load fences still apply. */
+        if (d->plan_ready && !d->obsolete && (d->pending || d->saved))
+            d->plan_revision = d->revision;
     }
     d->track.metadata_info.availability = AZ_AVAIL_READY;
     const az_status_grid_v1 *g = v->grid;
@@ -506,6 +510,19 @@ static int native_state(int deck, uint64_t now, az_deck_snapshot *s,
            cues->revision && cues->count <= AZ_NATIVE_CUE_LIMIT &&
            cues->native_load_generation == load && cues->source_rate_hz &&
            cues->source_rate_hz < 0x7fffffffu;
+}
+static int filter_metadata_ready(const cues_config *config,
+                                 const az_track_metadata *meta) {
+    for (int i = 0; i < config->group_count; ++i) {
+        const cues_group *g = &config->groups[i];
+        if (!g->enabled || !g->rule_count) continue;
+        if ((g->artist[0] && !(meta->valid & AZ_META_ARTIST)) ||
+            (g->key[0] && !(meta->valid & AZ_META_KEY))) return 0;
+        double low = g->min_bpm > 0 ? g->min_bpm : config->min_bpm;
+        double high = g->max_bpm > 0 ? g->max_bpm : config->max_bpm;
+        if ((low > 0 || high > 0) && !(meta->valid & AZ_META_TEMPO)) return 0;
+    }
+    return 1;
 }
 static void schedule_plan(int deck, const az_deck_snapshot *native,
                           const az_native_cue_snapshot *existing) {
@@ -732,6 +749,10 @@ static void tick(void) {
                 d->track.phrases_info.availability != AZ_AVAIL_READY &&
                 d->track.phrases_info.availability != AZ_AVAIL_EMPTY)
                 continue;
+            if (!filter_metadata_ready(config, &d->track.metadata)) {
+                status(i, "waiting for rule filter metadata");
+                continue;
+            }
             if (d->finished_revision != d->revision ||
                 d->finished_config != config_revision || d->manual_requested)
                 schedule_plan(i, &native, &existing);
