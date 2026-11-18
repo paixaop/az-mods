@@ -1,112 +1,116 @@
 # Track Analysis
 
-Track Analysis ports DJTrackAnalysis 6.0.0 into an AZ-MODS community mod.
-It automatically checks loaded USB OneLibrary and Beatport tracks and analyzes
-missing phrases and vocal detection in a separate low-priority ARM64 process. The public SDK supplies
-a lease tied to the accepted load and its current native beat grid. After analysis,
-the core saves the phrases and refreshes the firmware's active phrase map immediately.
-CUEs and Anchor can then react during the same load, without reloading the track.
-Existing populated grids, phrases, PVDI, cues and waveform data are preserved.
+Track Analysis fills missing phrases and vocal intervals for loaded USB OneLibrary
+and completed Beatport tracks. Version 0.5.2 contains its audio decoders, phrase
+classifier and vocal LSTM entirely in C inside `track-analysis.so`. A thread
+created by the public SDK coordinates bounded parallel analysis in the mod's process. No helper
+executable is extracted or launched.
 
-The loaded-track service is qualified on firmware **2.00**. It requires a ready
-native beat grid; it does not replace that grid or analyze folder-only tracks.
-USB phrases are saved to the track's ANLZ files. For rows without an analysis
-location, the core creates a stable USB folder and queues a conditional native
-library update. Beatport analysis uses the firmware's completed, decrypted audio
-resource and keeps only four per-deck analysis caches in internal settings.
-The mod requires the appended public `analysis_open_loaded_v2` service; a version
-number alone does not establish that capability. It uses no private mod hooks.
-
-The worker runs on the deck. It supports MPEG-1 Layer III MP3 at 44.1/48 kHz,
-AAC-LC in unencrypted, nonfragmented M4A/MP4 or ADTS at 44.1/48 kHz (mono/stereo),
-FLAC and WAV, up to twenty minutes.
-MP3 decoding preserves the encoded frame clock and the original conditional header
-silence; six generated decoder witnesses cover exact length, startup and seek behavior.
-AAC also preserves the encoded clock and encoder priming. MP4 edit-list metadata is
-reported explicitly; it is not silently applied as gapless trimming. Generated FFmpeg
-and Apple AudioToolbox witnesses verify 1024- and 2112-frame encoder priming,
-independent decoding, impulse positions and exact backwards seeks.
-It preserves the native beat/refinement and phrase classifier stages. Portable C FFT,
-matrix operations, miniaudio, FAAD2 and minimp4 replace Apple frameworks. These decoder
-changes mean the original package's exact audio-corpus results do not transfer to this
-port without further comparison. HE-AAC, AIFF, encrypted media and complex MP4 edit
-lists are unsupported. AAC files are limited to 128 MiB; MP4 parser allocations are
-limited to 16 MiB per decoder.
+The mod obtains a loaded-track lease through `analysis_open_loaded_v2`, reads
+`az_beat` records through `analysis_grid`, and publishes typed phrase and vocal
+arrays through `analysis_commit_result`. The core owns native file serialization,
+freshness checks and firmware publication. Existing populated grids, phrases,
+PVDI, cues and waveform data are preserved. The mod uses no private firmware hooks.
+A core must expose all three services; the version string alone is insufficient.
 
 Enable **Track Analysis** in Community Mods. Its page reports each deck's result.
-Disabling it cancels pending work. Loading another track cancels the old job; an obsolete
-completion cannot announce success for the new load. One worker processes jobs serially.
-Tracks with both phrases and populated PVDI are skipped. Valid all-zero PVDI counts as completed vocal analysis. Busy resources and source/file changes retry while
-the same load remains, so a cue edit during analysis does not permanently abandon it.
-Other failures are retried after a new load or an off/on toggle. The worker's bounded
-log is `data/analysis.log` on the installation USB.
+A new load or disabling the toggle cancels queued and running analysis. The core
+rejects stale publication. Track jobs run one at a time. Each job can use up to three analysis threads,
+all at nice 19 on A53 CPUs 1–3, outside the audio and UI cores. Child threads
+inherit the coordinator's scheduling policy. If that policy cannot be applied,
+analysis does not start. Each job has a ten-minute deadline and a 512 MiB limit on tracked analysis
+scratch allocations across both stages and every child thread. Codec state and
+the small returned arrays are additional.
+There is no process-wide memory limit. Errors go to the mod log. Busy leases and
+source changes retry; decoder, memory-limit and model failures wait for another
+load or an off/on toggle.
 
-Native phrase publication and automatic CUEs/Anchor activation passed USB and
-authenticated Beatport emulator tests on firmware 2.00. Physical tests also passed
-for Beatport generation and USB reuse; see [TESTING.md](TESTING.md) for scope.
+Phrase work requires the loaded native beat grid and preserves it. Vocal-only
+work does not read or require a grid. All-zero vocal activity is a completed
+instrumental timeline. Missing grid generation for standalone files is outside
+this mod's loaded-track workflow.
 
-## Vocal intervals
+## Execution and optimizations
 
-Existing PVDI in `.2EX` takes precedence. If only vocals are missing, the worker
-runs vocal detection without a beat grid or phrase classification; existing phrases
-are untouched. If phrases and vocals are both missing, it generates both. Missing
-phrase analysis still uses the loaded native beat grid. File-only SDK jobs can also
-generate a missing grid when no ANLZ exists.
+The original execution controls and defaults are retained:
 
-The public SDK's `vocal_intervals` and `vocal_intervals_loaded` return `[start_s,
-stop_s)` in original-track seconds. Consecutive PVDI values of 3 or 4 form a segment;
-there is no implicit beat snapping, gap merging or minimum-duration filter. Missing
-PVDI is distinct from a valid instrumental timeline with zero vocal intervals.
-Unknown or malformed PVDI is refused and preserved, not silently overwritten.
+| Control | Values | Default |
+| --- | --- | --- |
+| `TRACK_ANALYSIS_STAGE_MODE` | `sequential`, `concurrent` | `sequential` |
+| `TRACK_ANALYSIS_PHRASE_THREADS` | `1`, `2`, `3` | `1` |
+| `TRACK_ANALYSIS_PVDI_THREADS` | `1`, `2`, `3` | `1`; `2` for combined concurrent work |
 
-The fallback reuses the phrase detector's spectral peak heuristic on a uniform
-1024/22050-second timeline. It explicitly resamples the filtered source stream to
-the detector's 5512.5 Hz spectral clock, uses centered 2048-sample windows, and saves
-binary 0/4 scores. These are estimates, not calibrated probabilities; 46 ms spacing
-is not 46 ms acoustic accuracy. The roughly 372 ms analysis windows and spectral
-similarities between voices and instruments limit boundary precision and accuracy.
-No vocal audio is extracted. PVDI is saved with an `AZVD` marker so SDK consumers can
-distinguish this heuristic from pre-existing PVDI and clip the final interval to the
-actual decoded duration. Existing MP3/AAC encoded-clock rules also apply to vocals.
+Concurrent combined work accepts phrase/vocal splits 1/1, 1/2 and 2/1.
+Sequential stages each accept up to three threads. Invalid counts or an
+oversubscribed split fail before decoding. The C engine also accepts these
+settings through the typed `ta_execution` record in `ta_request`.
 
-The format, source-race and worker tests cover publication and timing, including
-44.1/48 kHz input and silent tracks. Labeled singing recordings and physical-deck
-acceptance remain necessary before claiming detection accuracy or firmware rendering
-of generated PVDI. This feature exposes SDK intervals; it adds no waveform overlay.
+Phrase workers divide independent decimator bands, CQT pitch bins and FFT bars.
+Filter state stays with its band across PCM blocks. Vocal workers divide
+eight-window groups, sharing read-only weights and features with private scratch.
+Output slots are disjoint; overlap scores merge in the original source order.
+Concurrent stages use separate decoders and join before returning. Cancellation,
+allocation failure or either-stage failure yields no partial published result.
+
+The port retains 8 KiB decimator tiles, 16,384-sample envelope chunks with
+in-place section passes and ARMv8 NEON FMA kernels. Vocal matrices pack eight
+output columns and share each weight load across up to eight windows, keeping
+sixteen vector accumulators in registers. Bounded prefetching reads upcoming
+weight rows without leaving the packed block. The vocal FFT reuses an immutable
+per-job permutation/twiddle plan, windows directly into bit-reversed order, and
+uses four-lane NEON butterflies and power conversion. Its original multiply,
+explicit FMA and addition order is preserved, including scalar tails.
+The CQT uses the original eight independent double-precision FMA chains and
+reduction order. DSP/codec kernels retain `-O3`; ARM64 builds target ARMv8.0 and
+tune for Cortex-A53 without fast-math. The original mimalloc 2.2.4 allocator is
+linked privately for analysis and codec allocations, with dynamic TLS and no
+process-wide allocator override or exported allocator symbols.
+
+`TRACK_ANALYSIS_PHRASE_PROFILE=1` retains phrase stage timings. Test drivers can
+inspect typed feature/probability arrays and stage timings through
+`ta_diagnostics`; the original `TRACK_ANALYSIS_PVDI_FEATURES` and
+`TRACK_ANALYSIS_PVDI_PROBABILITIES` float dumps remain opt-in diagnostics.
+
+## Audio and vocal model
+
+Supported audio is WAV/FLAC at 44.1 or 48 kHz, MPEG-1 Layer III MP3 at those rates,
+and mono/stereo AAC-LC in unencrypted, nonfragmented M4A/MP4 or ADTS. Maximum
+source duration is twenty minutes, subject to the memory bound. HE-AAC, AIFF,
+encrypted media, folder-only tracks and complex MP4 edit lists are unsupported.
+AAC files are limited to 128 MiB and MP4 parser allocations to 16 MiB per decoder.
+MP3/AAC decoding preserves the encoded source clock and encoder priming. MP4 edit
+metadata is reported without silently trimming the audio.
+
+Vocal analysis uses the recovered 29-feature, bidirectional two-layer LSTM with
+256 units per layer and two dense layers. Its 1,669,314 weights remain a local
+model asset, imported with `tools/import-pvdi-model.py`; they are not committed.
+Inference uses C and ARMv8 NEON with deterministic window merging. Linux retains
+the original musl activation rounding through private C math functions. The frontend
+runs at 22050 Hz with 2048-sample FFT windows and a 1024-sample hop. Activity values
+0–4 use strict thresholds 0.2, 0.4, 0.6 and 0.8. At least nine frames are required.
+The public SDK records `AZ_VOCAL_LSTM` provenance. Existing vocal maps, including
+older heuristic maps, are preserved.
 
 ## Build and test
 
-Install the Swift 6.4.2 Static Linux SDK using Swift.org's instructions. Set
-`SWIFT_SDKS_PATH` when it is installed somewhere other than macOS's default SDK directory.
-The worker builder uses the pinned official ARM64 Swift container and the existing
-`azmod-build:18.04` image for stripping. Docker must be running. It downloads and
-verifies mimalloc 2.2.4, then rebuilds it for ARMv8.0: the static SDK's bundled
-allocator uses LSE instructions unavailable on the deck's Cortex-A53/A72 cores.
-The replacement is local to the worker build; the installed Swift SDK is unchanged.
+Import the supported locally installed model with `tools/import-pvdi-model.py
+--help`, then use the SDK's ARM64 Ubuntu 18.04 build environment:
 
 ```sh
-make worker
-make test
 ../../az-mods-sdk/tools/azmod-pack build .
-../../az-mods-sdk/tools/azmod-pack package .
+../../az-mods-sdk/tools/azmod-pack package . --github paixaop/az-mods
 ```
 
-The worker has no dependency on a Swift installation or a newer glibc on the deck.
-Its compressed executable and model resources fit the mod installer's 16 MiB limit.
-The mod validates the gzip CRC and size before publishing its extracted executable
-inside its own data directory. The core validates output lengths and track/file
-fingerprints before saving. ANLZ writes use same-directory temporary files and synced
-rename publication. A missing disk grid is filled from the unchanged native snapshot. Successful
-publication also updates the active phrase map. A load or grid change rejects an
-obsolete job; valid files saved just before a race can be reused on a later load.
+`make` builds the shared mod directly; it needs a C compiler, the public SDK
+headers and libm. There is no Swift or C++ build dependency. The package contains
+the shared mod, model data and licenses. Host checks use:
 
-See [TESTING.md](TESTING.md) for emulator and physical-deck results and the
-remaining validation limits.
+```sh
+make CC=clang OUT=out/host SANITIZE=address,undefined test
+```
 
-Code is GPL-3.0-only. Miniaudio and miniz retain their upstream notices. Vendored
-FAAD2 2.11.4 is GPL-2.0-or-later; minimp4 is CC0. Their pinned sources and licenses
-are documented in `worker/Sources/FAAD/SOURCE.md` and
-`worker/Sources/PortableDSP/SOURCE.md`, and their licenses accompany the package.
-The bundled madmom model weights are **CC BY-NC-SA 4.0**, including a noncommercial
-restriction; see `assets/NativeBeatModels/LICENSE.txt` and its README for attribution
-and source. That restriction remains relevant to distribution and commercial DJ use.
+The C tests cover numerical reference fixtures, complete phrase analysis at both
+source rates, typed vocal output, codec clocks and seeks, cancellation, memory
+limits and mod lifecycle. See [TESTING.md](TESTING.md) for validation scope.
+Decoder provenance and licenses are in [analysis/dsp/SOURCE.md](analysis/dsp/SOURCE.md)
+and [vendor/faad/SOURCE.md](vendor/faad/SOURCE.md).
