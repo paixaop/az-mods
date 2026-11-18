@@ -31,9 +31,6 @@
 #ifndef __STRUCTS_H__
 #define __STRUCTS_H__
 
-#ifdef __cplusplus
-extern "C" {
-#endif
 
 #include "cfft.h"
 #ifdef SBR_DEC
@@ -441,7 +438,4 @@ typedef struct
 
 
 
-#ifdef __cplusplus
-}
-#endif
 #endif

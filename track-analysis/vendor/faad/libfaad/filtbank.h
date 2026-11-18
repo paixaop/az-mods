@@ -31,9 +31,6 @@
 #ifndef __FILTBANK_H__
 #define __FILTBANK_H__
 
-#ifdef __cplusplus
-extern "C" {
-#endif
 
 
 fb_info *filter_bank_init(uint16_t frame_len);
@@ -55,7 +52,4 @@ void ifilter_bank(fb_info *fb, uint8_t window_sequence, uint8_t window_shape,
                   real_t *time_out, real_t *overlap,
                   uint8_t object_type, uint16_t frame_len);
 
-#ifdef __cplusplus
-}
-#endif
 #endif

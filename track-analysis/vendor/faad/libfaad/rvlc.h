@@ -31,9 +31,6 @@
 #ifndef __RVLC_SCF_H__
 #define __RVLC_SCF_H__
 
-#ifdef __cplusplus
-extern "C" {
-#endif
 
 typedef struct
 {
@@ -50,7 +47,4 @@ uint8_t rvlc_scale_factor_data(ic_stream *ics, bitfile *ld);
 uint8_t rvlc_decode_scale_factors(ic_stream *ics, bitfile *ld);
 
 
-#ifdef __cplusplus
-}
-#endif
 #endif

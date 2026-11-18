@@ -31,9 +31,6 @@
 #ifndef __DRM_DEC_H__
 #define __DRM_DEC_H__
 
-#ifdef __cplusplus
-extern "C" {
-#endif
 
 #include "bits.h"
 
@@ -93,8 +90,5 @@ void drm_ps_free(drm_ps_info *ps);
 
 uint8_t drm_ps_decode(drm_ps_info *ps, uint8_t guess, qmf_t X_left[38][64], qmf_t X_right[38][64]);
 
-#ifdef __cplusplus
-}
-#endif
 #endif
 

@@ -31,9 +31,6 @@
 #ifndef __MDCT_TAB_H__
 #define __MDCT_TAB_H__
 
-#ifdef __cplusplus
-extern "C" {
-#endif
 
 #ifdef FIXED_POINT
 
@@ -3649,7 +3646,4 @@ ALIGN static const complex_t mdct_tab_64[] =
 
 #endif // FIXED_POINT
 
-#ifdef __cplusplus
-}
-#endif
 #endif

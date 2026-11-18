@@ -31,9 +31,6 @@
 #ifndef __SPECREC_H__
 #define __SPECREC_H__
 
-#ifdef __cplusplus
-extern "C" {
-#endif
 
 #include "syntax.h"
 
@@ -43,7 +40,4 @@ uint8_t reconstruct_channel_pair(NeAACDecStruct *hDecoder, ic_stream *ics1, ic_s
 uint8_t reconstruct_single_channel(NeAACDecStruct *hDecoder, ic_stream *ics, element *sce,
                                 int16_t *spec_data);
 
-#ifdef __cplusplus
-}
-#endif
 #endif

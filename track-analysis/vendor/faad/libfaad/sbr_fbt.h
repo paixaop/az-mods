@@ -31,9 +31,6 @@
 #ifndef __SBR_FBT_H__
 #define __SBR_FBT_H__
 
-#ifdef __cplusplus
-extern "C" {
-#endif
 
 uint8_t qmf_start_channel(uint8_t bs_start_freq, uint8_t bs_samplerate_mode,
                            uint32_t sample_rate);
@@ -48,8 +45,5 @@ uint8_t derived_frequency_table(sbr_info *sbr, uint8_t bs_xover_band,
 void limiter_frequency_table(sbr_info *sbr);
 
 
-#ifdef __cplusplus
-}
-#endif
 #endif
 

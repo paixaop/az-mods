@@ -31,9 +31,6 @@
 #ifndef __COMMON_H__
 #define __COMMON_H__
 
-#ifdef __cplusplus
-extern "C" {
-#endif
 
 #ifdef HAVE_CONFIG_H
 #  include "../config.h"
@@ -431,7 +428,4 @@ static int64_t faad_get_ts()
 #endif
 
 
-#ifdef __cplusplus
-}
-#endif
 #endif

@@ -31,16 +31,10 @@
 #ifndef __SSR_IPQF_H__
 #define __SSR_IPQF_H__
 
-#ifdef __cplusplus
-extern "C" {
-#endif
 
 void ssr_ipqf(ssr_info *ssr, real_t *in_data, real_t *out_data,
               real_t buffer[SSR_BANDS][96/4],
               uint16_t frame_len, uint8_t bands);
 
 
-#ifdef __cplusplus
-}
-#endif
 #endif

@@ -31,9 +31,6 @@
 #ifndef __PNS_H__
 #define __PNS_H__
 
-#ifdef __cplusplus
-extern "C" {
-#endif
 
 #include "syntax.h"
 
@@ -51,7 +48,4 @@ static INLINE uint8_t is_noise(ic_stream *ics, uint8_t group, uint8_t sfb)
     return 0;
 }
 
-#ifdef __cplusplus
-}
-#endif
 #endif

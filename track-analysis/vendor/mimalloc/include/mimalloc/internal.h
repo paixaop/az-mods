@@ -51,14 +51,6 @@ terms of the MIT license. A copy of the license can be found in the file
 #else
 #define mi_decl_cold
 #endif
-#elif __cplusplus >= 201103L    // c++11
-#define mi_decl_noinline
-#define mi_decl_thread          thread_local
-#define mi_decl_align(a)        alignas(a)
-#define mi_decl_noreturn        [[noreturn]]
-#define mi_decl_weak
-#define mi_decl_hidden
-#define mi_decl_cold
 #else
 #define mi_decl_noinline
 #define mi_decl_thread          __thread        // hope for the best :-)
@@ -72,9 +64,6 @@ terms of the MIT license. A copy of the license can be found in the file
 #if defined(__GNUC__) || defined(__clang__)
 #define mi_unlikely(x)     (__builtin_expect(!!(x),false))
 #define mi_likely(x)       (__builtin_expect(!!(x),true))
-#elif (defined(__cplusplus) && (__cplusplus >= 202002L)) || (defined(_MSVC_LANG) && _MSVC_LANG >= 202002L)
-#define mi_unlikely(x)     (x) [[unlikely]]
-#define mi_likely(x)       (x) [[likely]]
 #else
 #define mi_unlikely(x)     (x)
 #define mi_likely(x)       (x)
@@ -84,11 +73,7 @@ terms of the MIT license. A copy of the license can be found in the file
 #define __has_builtin(x)    0
 #endif
 
-#if defined(__cplusplus)
-#define mi_decl_externc     extern "C"
-#else
 #define mi_decl_externc
-#endif
 
 #if defined(__EMSCRIPTEN__) && !defined(__wasi__)
 #define __wasi__

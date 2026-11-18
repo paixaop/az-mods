@@ -31,9 +31,6 @@
 #ifndef __KBD_WIN_H__
 #define __KBD_WIN_H__
 
-#ifdef __cplusplus
-extern "C" {
-#endif
 
 #ifdef _MSC_VER
 #pragma warning(disable:4305)
@@ -2291,7 +2288,4 @@ ALIGN static const real_t kbd_short_120[] =
 };
 #endif
 
-#ifdef __cplusplus
-}
-#endif
 #endif

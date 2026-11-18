@@ -17,7 +17,6 @@ HEADERS         := deck.h guide.h settings.h display.h mod.h \
 MAX_REDRAWS     ?= 6
 SAN             ?= plain asan tsan
 TEST_CC         ?= clang
-TEST_CXX        ?= clang++
 OUT             ?= out
 DEBUG           ?= 0
 UNIT_SAN_FLAGS  ?=
@@ -25,7 +24,7 @@ UNIT_SAN_FLAGS  ?=
 ifeq ($(origin CC),default)
 CC := gcc
 endif
-CFLAGS  := -O2 -Wall -Wextra -Werror=implicit-function-declaration \
+CFLAGS  := -std=gnu11 -O2 -Wall -Wextra -Werror=implicit-function-declaration \
            -fPIC -fvisibility=hidden -fno-omit-frame-pointer \
            -fexceptions -fasynchronous-unwind-tables \
            -D_GNU_SOURCE -I$(AZ_SDK_INCLUDE)
@@ -76,7 +75,7 @@ ui-test: $(OUT)/render_ui $(OUT)/test_settings
 test:
 	@test -f $(AZ_SDK)/tools/harness/sanitize.sh || \
 	    { echo "make test: set AZ_SDK to your az-mods-sdk checkout" >&2; exit 2; }
-	CC=$(TEST_CC) CXX=$(TEST_CXX) sh $(AZ_SDK)/tools/harness/sanitize.sh --passes "$(SAN)" \
+	CC=$(TEST_CC) sh $(AZ_SDK)/tools/harness/sanitize.sh --passes "$(SAN)" \
 	    $(MOD_ID):$(MAX_REDRAWS):anchor.c,deck.c,guide.c,settings.c,display.c
 
 previews:

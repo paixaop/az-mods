@@ -33,9 +33,6 @@
 #ifndef __LT_PREDICT_H__
 #define __LT_PREDICT_H__
 
-#ifdef __cplusplus
-extern "C" {
-#endif
 
 #include "filtbank.h"
 
@@ -58,9 +55,6 @@ void lt_update_state(int16_t *lt_pred_stat,
                      uint16_t frame_len,
                      uint8_t object_type);
 
-#ifdef __cplusplus
-}
-#endif
 #endif
 
 #endif

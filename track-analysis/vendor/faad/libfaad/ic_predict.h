@@ -33,9 +33,6 @@
 #ifndef __IC_PREDICT_H__
 #define __IC_PREDICT_H__
 
-#ifdef __cplusplus
-extern "C" {
-#endif
 
 #define ALPHA      REAL_CONST(0.90625)
 #define A          REAL_CONST(0.953125)
@@ -244,9 +241,6 @@ ALIGN static const real_t exp_table[128] = {
     COEF_CONST(0.0)
 };
 
-#ifdef __cplusplus
-}
-#endif
 #endif
 
 #endif

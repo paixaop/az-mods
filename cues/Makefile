@@ -6,7 +6,6 @@ AZ_SDK_INCLUDE ?= $(AZ_SDK)/include
 OUT ?= out
 SAN ?= plain asan tsan
 TEST_CC ?= clang
-TEST_CXX ?= clang++
 UNIT_SAN_FLAGS ?=
 ifeq ($(origin CC),default)
 CC := gcc
@@ -47,7 +46,7 @@ unit: $(OUT)/test_plan $(OUT)/test_runtime $(OUT)/test_config $(OUT)/test_store 
 	./$(OUT)/test_store
 	./$(OUT)/test_settings
 test:
-	CC=$(TEST_CC) CXX=$(TEST_CXX) sh $(AZ_SDK)/tools/harness/sanitize.sh --passes "$(SAN)" \
+	CC=$(TEST_CC) sh $(AZ_SDK)/tools/harness/sanitize.sh --passes "$(SAN)" \
 	    $(MOD_ID):4:cues.c,config.c,settings.c,store.c,plan.c
 clean:
 	rm -rf $(OUT)

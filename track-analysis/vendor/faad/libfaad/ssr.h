@@ -31,9 +31,6 @@
 #ifndef __SSR_H__
 #define __SSR_H__
 
-#ifdef __cplusplus
-extern "C" {
-#endif
 
 #define SSR_BANDS 4
 #define PQFTAPS 96
@@ -53,7 +50,4 @@ static void ssr_gc_function(ssr_info *ssr, real_t *prev_fmd,
                             uint16_t frame_len);
 
 
-#ifdef __cplusplus
-}
-#endif
 #endif

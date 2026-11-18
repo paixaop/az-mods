@@ -31,9 +31,6 @@
 #ifndef __SBR_SYNTAX_H__
 #define __SBR_SYNTAX_H__
 
-#ifdef __cplusplus
-extern "C" {
-#endif
 
 #include "bits.h"
 
@@ -61,8 +58,5 @@ extern "C" {
 uint8_t sbr_extension_data(bitfile *ld, sbr_info *sbr, uint16_t cnt,
                            uint8_t resetFlag);
 
-#ifdef __cplusplus
-}
-#endif
 #endif /* __SBR_SYNTAX_H__ */
 

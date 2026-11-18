@@ -31,9 +31,6 @@
 #ifndef __CFFT_TAB_H__
 #define __CFFT_TAB_H__
 
-#ifdef __cplusplus
-extern "C" {
-#endif
 
 #ifdef FIXED_POINT
 
@@ -1817,7 +1814,4 @@ ALIGN static const complex_t cfft_tab_128[] =
 
 #endif
 
-#ifdef __cplusplus
-}
-#endif
 #endif

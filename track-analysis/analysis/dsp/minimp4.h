@@ -15,9 +15,6 @@
 #include <limits.h>
 #include <assert.h>
 
-#ifdef __cplusplus
-extern "C" {
-#endif
 
 #define MINIMP4_MIN(x, y) ((x) < (y) ? (x) : (y))
 
@@ -588,9 +585,6 @@ int MP4E_set_pps(MP4E_mux_t *mux, int track_id, const void *pps, int bytes);
 */
 int MP4E_set_text_comment(MP4E_mux_t *mux, const char *comment);
 
-#ifdef __cplusplus
-}
-#endif
 #endif //MINIMP4_H
 
 #if defined(MINIMP4_IMPLEMENTATION) && !defined(MINIMP4_IMPLEMENTATION_GUARD)

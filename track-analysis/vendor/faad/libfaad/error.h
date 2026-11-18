@@ -31,14 +31,8 @@
 #ifndef __ERROR_H__
 #define __ERROR_H__
 
-#ifdef __cplusplus
-extern "C" {
-#endif
 
 #define NUM_ERROR_MESSAGES 35
 extern char *err_msg[];
 
-#ifdef __cplusplus
-}
-#endif
 #endif

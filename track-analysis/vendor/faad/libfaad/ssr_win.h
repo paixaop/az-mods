@@ -31,9 +31,6 @@
 #ifndef __SSR_WIN_H__
 #define __SSR_WIN_H__
 
-#ifdef __cplusplus
-extern "C" {
-#endif
 
 #ifdef _MSC_VER
 #pragma warning(disable:4305)
@@ -629,7 +626,4 @@ static real_t kbd_long_256[] = {
     0.9999998288155155
 };
 
-#ifdef __cplusplus
-}
-#endif
 #endif

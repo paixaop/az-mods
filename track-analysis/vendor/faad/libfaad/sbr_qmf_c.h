@@ -31,9 +31,6 @@
 #ifndef __SBR_QMF_C_H__
 #define __SBR_QMF_C_H__
 
-#ifdef __cplusplus
-extern "C" {
-#endif
 
 
 #ifdef _MSC_VER

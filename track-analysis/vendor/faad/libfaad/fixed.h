@@ -31,9 +31,6 @@
 #ifndef __FIXED_H__
 #define __FIXED_H__
 
-#ifdef __cplusplus
-extern "C" {
-#endif
 
 #if defined(_WIN32_WCE) && defined(_ARM_)
 #include <cmnintrin.h>
@@ -288,7 +285,4 @@ static INLINE void ComplexMult(real_t *y1, real_t *y2,
     ? (((V) < 0) ? (int32_t)0x80000000 : 0x7FFFFFFF) \
     : ((int32_t)((uint32_t)(V) << (E))))
 
-#ifdef __cplusplus
-}
-#endif
 #endif

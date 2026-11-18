@@ -452,32 +452,6 @@ use a C compiler we cannot throw a `bad_alloc` exception
 but we call `exit` instead (i.e. not returning).
 -------------------------------------------------------*/
 
-#ifdef __cplusplus
-#include <new>
-static bool mi_try_new_handler(bool nothrow) {
-  #if defined(_MSC_VER) || (__cplusplus >= 201103L)
-    std::new_handler h = std::get_new_handler();
-  #else
-    std::new_handler h = std::set_new_handler();
-    std::set_new_handler(h);
-  #endif
-  if (h==NULL) {
-    _mi_error_message(ENOMEM, "out of memory in 'new'");
-    #if defined(_CPPUNWIND) || defined(__cpp_exceptions)  // exceptions are not always enabled
-    if (!nothrow) {
-      throw std::bad_alloc();
-    }
-    #else
-    MI_UNUSED(nothrow);
-    #endif
-    return false;
-  }
-  else {
-    h();
-    return true;
-  }
-}
-#else
 typedef void (*std_new_handler_t)(void);
 
 #if (defined(__GNUC__) || (defined(__clang__) && !defined(_MSC_VER)))  // exclude clang-cl, see issue #631
@@ -508,7 +482,6 @@ static bool mi_try_new_handler(bool nothrow) {
     return true;
   }
 }
-#endif
 
 mi_decl_export mi_decl_noinline void* mi_heap_try_new(mi_heap_t* heap, size_t size, bool nothrow ) {
   void* p = NULL;
@@ -673,20 +646,3 @@ mi_decl_restrict void* _mi_heap_malloc_guarded(mi_heap_t* heap, size_t size, boo
 // ------------------------------------------------------
 // ensure explicit external inline definitions are emitted!
 // ------------------------------------------------------
-
-#ifdef __cplusplus
-void* _mi_externs[] = {
-  (void*)&_mi_page_malloc,
-  (void*)&_mi_page_malloc_zero,
-  (void*)&_mi_heap_malloc_zero,
-  (void*)&_mi_heap_malloc_zero_ex,
-  (void*)&mi_malloc,
-  (void*)&mi_malloc_small,
-  (void*)&mi_zalloc_small,
-  (void*)&mi_heap_malloc,
-  (void*)&mi_heap_zalloc,
-  (void*)&mi_heap_malloc_small,
-  // (void*)&mi_heap_alloc_new,
-  // (void*)&mi_heap_alloc_new_n
-};
-#endif

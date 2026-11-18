@@ -31,9 +31,6 @@
 #ifndef __SBR_NOISE_H__
 #define __SBR_NOISE_H__
 
-#ifdef __cplusplus
-extern "C" {
-#endif
 
 #ifdef _MSC_VER
 #pragma warning(disable:4305)
@@ -557,8 +554,5 @@ ALIGN static const complex_t V[] = {
     { FRAC_CONST(0.91599804162979), FRAC_CONST(-0.98147833347321) }
 };
 
-#ifdef __cplusplus
-
-#endif
 #endif
 

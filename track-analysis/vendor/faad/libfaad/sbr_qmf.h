@@ -31,9 +31,6 @@
 #ifndef __SBR_QMF_H__
 #define __SBR_QMF_H__
 
-#ifdef __cplusplus
-extern "C" {
-#endif
 
 qmfa_info *qmfa_init(uint8_t channels);
 void qmfa_end(qmfa_info *qmfa);
@@ -48,8 +45,5 @@ void sbr_qmf_synthesis_64(sbr_info *sbr, qmfs_info *qmfs, qmf_t X[MAX_NTSRHFG][6
                           real_t *output);
 
 
-#ifdef __cplusplus
-}
-#endif
 #endif
 

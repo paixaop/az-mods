@@ -64,7 +64,8 @@ The CQT uses the original eight independent double-precision FMA chains and
 reduction order. DSP/codec kernels retain `-O3`; ARM64 builds target ARMv8.0 and
 tune for Cortex-A53 without fast-math. The original mimalloc 2.2.4 allocator is
 linked privately for analysis and codec allocations, with dynamic TLS and no
-process-wide allocator override or exported allocator symbols.
+process-wide allocator override or exported allocator symbols. Vendored libraries retain
+their C implementations; unused C++ compatibility branches have been removed.
 
 `TRACK_ANALYSIS_PHRASE_PROFILE=1` retains phrase stage timings. Test drivers can
 inspect typed feature/probability arrays and stage timings through

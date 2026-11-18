@@ -62,9 +62,6 @@
   #endif
 #endif // ETW_INLINE
 
-#if defined(__cplusplus)
-extern "C" {
-#endif
 
 //
 // MCGEN_DISABLE_PROVIDER_CODE_GENERATION macro:
@@ -899,7 +896,3 @@ _mcgen_PASTE2(McTemplateU0xx_, MCGEN_EVENTWRITETRANSFER)(
 #endif // McTemplateU0xx_def
 
 #endif // MCGEN_DISABLE_PROVIDER_CODE_GENERATION
-
-#if defined(__cplusplus)
-}
-#endif

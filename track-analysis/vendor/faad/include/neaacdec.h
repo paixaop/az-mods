@@ -31,9 +31,6 @@
 #ifndef __NEAACDEC_H__
 #define __NEAACDEC_H__
 
-#ifdef __cplusplus
-extern "C" {
-#endif /* __cplusplus */
 
 
 #if 1
@@ -256,8 +253,5 @@ NEAACDECAPI int NeAACDecGetVersion(char **faad_id_string,
   #pragma pack(pop)
 #endif
 
-#ifdef __cplusplus
-}
-#endif /* __cplusplus */
 
 #endif

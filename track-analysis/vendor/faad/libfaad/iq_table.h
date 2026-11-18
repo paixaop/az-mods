@@ -31,9 +31,6 @@
 #ifndef IQ_TABLE_H__
 #define IQ_TABLE_H__
 
-#ifdef __cplusplus
-extern "C" {
-#endif
 
 
 /* !!!DON'T CHANGE IQ_TABLE_SIZE!!! */
@@ -16452,7 +16449,4 @@ ALIGN static const real_t iq_table[IQ_TABLE_SIZE] =
 
 #endif
 
-#ifdef __cplusplus
-}
-#endif
 #endif

@@ -31,9 +31,6 @@
 #ifndef __DRC_H__
 #define __DRC_H__
 
-#ifdef __cplusplus
-extern "C" {
-#endif
 
 #define DRC_REF_LEVEL 20*4 /* -20 dB */
 
@@ -43,7 +40,4 @@ void drc_end(drc_info *drc);
 void drc_decode(drc_info *drc, real_t *spec);
 
 
-#ifdef __cplusplus
-}
-#endif
 #endif

@@ -31,9 +31,6 @@
 #ifndef __CFFT_H__
 #define __CFFT_H__
 
-#ifdef __cplusplus
-extern "C" {
-#endif
 
 typedef struct
 {
@@ -50,7 +47,4 @@ cfft_info *cffti(uint16_t n);
 void cfftu(cfft_info *cfft);
 
 
-#ifdef __cplusplus
-}
-#endif
 #endif

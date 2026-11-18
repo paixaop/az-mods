@@ -31,9 +31,6 @@
 #ifndef __SYNTAX_H__
 #define __SYNTAX_H__
 
-#ifdef __cplusplus
-extern "C" {
-#endif
 
 #include "bits.h"
 
@@ -126,7 +123,4 @@ void DRM_aac_scalable_main_element(NeAACDecStruct *hDecoder, NeAACDecFrameInfo *
 uint32_t faad_latm_frame(latm_header *latm, bitfile *ld);
 #endif
 
-#ifdef __cplusplus
-}
-#endif
 #endif

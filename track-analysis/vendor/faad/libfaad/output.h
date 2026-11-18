@@ -31,9 +31,6 @@
 #ifndef __OUTPUT_H__
 #define __OUTPUT_H__
 
-#ifdef __cplusplus
-extern "C" {
-#endif
 
 void* output_to_PCM(NeAACDecStruct *hDecoder,
                     real_t **input,
@@ -42,7 +39,4 @@ void* output_to_PCM(NeAACDecStruct *hDecoder,
                     uint16_t frame_len,
                     uint8_t format);
 
-#ifdef __cplusplus
-}
-#endif
 #endif

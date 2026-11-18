@@ -31,9 +31,6 @@
 #ifndef __HCB_H__
 #define __HCB_H__
 
-#ifdef __cplusplus
-extern "C" {
-#endif
 
 /*
  *  Optimal huffman decoding for AAC taken from:
@@ -131,7 +128,4 @@ typedef struct
 #include "codebook/hcb_11.h"
 #include "codebook/hcb_sf.h"
 
-#ifdef __cplusplus
-}
-#endif
 #endif

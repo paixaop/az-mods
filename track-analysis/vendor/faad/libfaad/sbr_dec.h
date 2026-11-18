@@ -31,9 +31,6 @@
 #ifndef __SBR_DEC_H__
 #define __SBR_DEC_H__
 
-#ifdef __cplusplus
-extern "C" {
-#endif
 
 #ifdef PS_DEC
 #include "ps_dec.h"
@@ -251,8 +248,5 @@ uint8_t sbrDecodeSingleFramePS(sbr_info *sbr, real_t *left_channel, real_t *righ
 #endif
 
 
-#ifdef __cplusplus
-}
-#endif
 #endif
 

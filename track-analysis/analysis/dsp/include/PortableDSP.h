@@ -7,9 +7,6 @@
 #include <stdlib.h>
 #include <unistd.h>
 #include <time.h>
-#ifdef __cplusplus
-extern "C" {
-#endif
 void ta_fft_f(float *real, float *imaginary, size_t count);
 void ta_fft_d(double *real, double *imaginary, size_t count);
 /* Internal causal double filters. process supports exact in-place use;
@@ -35,7 +32,4 @@ void ta_decode_get_clock(ta_decoder *decoder, ta_decode_clock *clock);
 int64_t ta_decode_read(ta_decoder *decoder, int16_t *stereo, uint64_t frames);
 int ta_decode_seek(ta_decoder *decoder, uint64_t frame);
 void ta_decode_close(ta_decoder *decoder);
-#ifdef __cplusplus
-}
-#endif
 #endif

@@ -31,9 +31,6 @@
 #ifndef __MP4_H__
 #define __MP4_H__
 
-#ifdef __cplusplus
-extern "C" {
-#endif
 
 #include "bits.h"
 #include "neaacdec.h"
@@ -47,7 +44,4 @@ int8_t AudioSpecificConfigFromBitfile(bitfile *ld,
                                       mp4AudioSpecificConfig *mp4ASC,
                                       program_config *pce, uint32_t bsize, uint8_t short_form);
 
-#ifdef __cplusplus
-}
-#endif
 #endif

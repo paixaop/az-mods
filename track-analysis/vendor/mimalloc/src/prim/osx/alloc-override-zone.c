@@ -28,9 +28,6 @@ terms of the MIT license. A copy of the license can be found in the file
 #include <string.h>  // memset
 #include <stdlib.h>
 
-#ifdef __cplusplus
-extern "C" {
-#endif
 
 #if defined(MAC_OS_X_VERSION_10_6) && (MAC_OS_X_VERSION_MAX_ALLOWED >= MAC_OS_X_VERSION_10_6)
 // only available from OSX 10.6
@@ -236,9 +233,6 @@ static malloc_zone_t mi_malloc_zone = {
 #endif
 };
 
-#ifdef __cplusplus
-}
-#endif
 
 
 #if defined(MI_OSX_INTERPOSE) && defined(MI_SHARED_LIB_EXPORT)

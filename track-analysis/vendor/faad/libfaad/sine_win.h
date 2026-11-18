@@ -31,9 +31,6 @@
 #ifndef __SINE_WIN_H__
 #define __SINE_WIN_H__
 
-#ifdef __cplusplus
-extern "C" {
-#endif
 
 #ifdef _MSC_VER
 #pragma warning(disable:4305)
@@ -4298,7 +4295,4 @@ ALIGN static const real_t ld_mid_480[] =
 #endif
 #endif
 
-#ifdef __cplusplus
-}
-#endif
 #endif

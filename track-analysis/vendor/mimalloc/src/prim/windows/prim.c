@@ -614,7 +614,7 @@ bool _mi_prim_getenv(const char* name, char* result, size_t result_size) {
 // Random
 //----------------------------------------------------------------
 
-#if defined(MI_USE_RTLGENRANDOM) // || defined(__cplusplus)
+#if defined(MI_USE_RTLGENRANDOM)
 // We prefer to use BCryptGenRandom instead of (the unofficial) RtlGenRandom but when using
 // dynamic overriding, we observed it can raise an exception when compiled with C++, and
 // sometimes deadlocks when also running under the VS debugger.
@@ -738,9 +738,6 @@ static void NTAPI mi_win_main(PVOID module, DWORD reason, LPVOID reserved) {
   // See <https://stackoverflow.com/questions/14538159/tls-callback-in-windows>
   // We use 2 entries to ensure we call attach events before constructors
   // are called, and detach events after destructors are called.
-  #if defined(__cplusplus)
-  extern "C" {
-  #endif
 
   #if defined(_WIN64)
     #pragma comment(linker, "/INCLUDE:_tls_used")
@@ -766,9 +763,6 @@ static void NTAPI mi_win_main(PVOID module, DWORD reason, LPVOID reserved) {
     #pragma data_seg()
   #endif
 
-  #if defined(__cplusplus)
-  }
-  #endif
 
   // nothing to do since `_mi_thread_done` is handled through the DLL_THREAD_DETACH event.
   void _mi_prim_thread_init_auto_done(void) { }
@@ -848,9 +842,6 @@ static void NTAPI mi_win_main(PVOID module, DWORD reason, LPVOID reserved) {
     return mi_redirected;
   }
 
-  #ifdef __cplusplus
-  extern "C" {
-  #endif
   mi_decl_export void _mi_redirect_entry(DWORD reason) {
     // called on redirection; careful as this may be called before DllMain
     mi_win_tls_init(reason);
@@ -866,9 +857,6 @@ static void NTAPI mi_win_main(PVOID module, DWORD reason, LPVOID reserved) {
   }
   __declspec(dllimport) bool mi_cdecl mi_allocator_init(const char** message);
   __declspec(dllimport) void mi_cdecl mi_allocator_done(void);
-  #ifdef __cplusplus
-  }
-  #endif
   bool _mi_allocator_init(const char** message) {
     return mi_allocator_init(message);
   }

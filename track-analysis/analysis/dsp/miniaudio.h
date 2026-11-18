@@ -3738,9 +3738,6 @@ See below for some tips on improving performance.
 #ifndef miniaudio_h
 #define miniaudio_h
 
-#ifdef __cplusplus
-extern "C" {
-#endif
 
 #define MA_STRINGIFY(x)     #x
 #define MA_XSTRINGIFY(x)    MA_STRINGIFY(x)
@@ -3953,9 +3950,6 @@ typedef ma_uint16 wchar_t;
     #endif
 #endif
 
-#if !defined(MA_FALLTHROUGH) && defined(__cplusplus) && __cplusplus >= 201703L
-    #define MA_FALLTHROUGH [[fallthrough]]
-#endif
 #if !defined(MA_FALLTHROUGH) && defined(__STDC_VERSION__) && __STDC_VERSION__ >= 202000L
     #define MA_FALLTHROUGH [[fallthrough]]
 #endif
@@ -11515,9 +11509,6 @@ MA_API ma_uint64 ma_sound_group_get_time_in_pcm_frames(const ma_sound_group* pGr
 #endif  /* MA_NO_ENGINE */
 /* END SECTION: miniaudio_engine.h */
 
-#ifdef __cplusplus
-}
-#endif
 #endif  /* miniaudio_h */
 
 
@@ -13804,7 +13795,7 @@ MA_API ma_result ma_log_postv(ma_log* pLog, ma_uint32 level, const char* pFormat
         return MA_INVALID_ARGS;
     }
 
-    #if (defined(__STDC_VERSION__) && __STDC_VERSION__ >= 199901L) || ((!defined(_MSC_VER) || _MSC_VER >= 1900) && !defined(__STRICT_ANSI__) && !defined(_NO_EXT_KEYS)) || (defined(__cplusplus) && __cplusplus >= 201103L)
+    #if (defined(__STDC_VERSION__) && __STDC_VERSION__ >= 199901L) || ((!defined(_MSC_VER) || _MSC_VER >= 1900) && !defined(__STRICT_ANSI__) && !defined(_NO_EXT_KEYS))
     {
         ma_result result;
         int length;
@@ -14196,9 +14187,6 @@ Atomics
 /* c89atomic.h begin */
 #ifndef ma_atomic_h
 #define ma_atomic_h
-#if defined(__cplusplus)
-extern "C" {
-#endif
 #if defined(__clang__) || (defined(__GNUC__) && (__GNUC__ > 4 || (__GNUC__ == 4 && __GNUC_MINOR__ >= 6)))
     #pragma GCC diagnostic push
     #pragma GCC diagnostic ignored "-Wlong-long"
@@ -17340,9 +17328,6 @@ static MA_INLINE double ma_atomic_compare_and_swap_f64(volatile double* dst, dou
 #if defined(__clang__) || (defined(__GNUC__) && (__GNUC__ > 4 || (__GNUC__ == 4 && __GNUC_MINOR__ >= 6)))
     #pragma GCC diagnostic pop
 #endif
-#if defined(__cplusplus)
-}
-#endif
 #endif
 /* c89atomic.h end */
 
@@ -20192,16 +20177,10 @@ static void ma_device__on_notification_rerouted(ma_device* pDevice)
 #endif
 
 #if defined(MA_EMSCRIPTEN)
-#ifdef __cplusplus
-extern "C" {
-#endif
 void EMSCRIPTEN_KEEPALIVE ma_device__on_notification_unlocked(ma_device* pDevice)
 {
     ma_device__on_notification(ma_device_notification_init(pDevice, ma_device_notification_type_unlocked));
 }
-#ifdef __cplusplus
-}
-#endif
 #endif
 
 
@@ -21583,14 +21562,7 @@ static void ma_channel_mask_to_channel_map__win32(DWORD dwChannelMask, ma_uint32
     }
 }
 
-#ifdef __cplusplus
-static ma_bool32 ma_is_guid_equal(const void* a, const void* b)
-{
-    return IsEqualGUID(*(const GUID*)a, *(const GUID*)b);
-}
-#else
 #define ma_is_guid_equal(a, b) IsEqualGUID((const GUID*)a, (const GUID*)b)
-#endif
 
 static MA_INLINE ma_bool32 ma_is_guid_null(const void* guid)
 {
@@ -23234,11 +23206,7 @@ static ma_result ma_context_get_IAudioClient_UWP__wasapi(ma_context* pContext, m
             iid = MA_IID_DEVINTERFACE_AUDIO_RENDER;
         }
 
-    #if defined(__cplusplus)
-        hr = StringFromIID(iid, &iidStr);
-    #else
         hr = StringFromIID(&iid, &iidStr);
-    #endif
         if (FAILED(hr)) {
             ma_log_postf(ma_context_get_log(pContext), MA_LOG_LEVEL_ERROR, "[WASAPI] Failed to convert device IID to string for ActivateAudioInterfaceAsync(). Out of memory.\n");
             return ma_result_from_HRESULT(hr);
@@ -28070,14 +28038,12 @@ ALSA Backend
 #ifdef MA_NO_RUNTIME_LINKING
 
 /* asoundlib.h marks some functions with "inline" which isn't always supported. Need to emulate it. */
-#if !defined(__cplusplus)
     #if defined(__STRICT_ANSI__)
         #if !defined(inline)
             #define inline __inline__ __attribute__((always_inline))
             #define MA_INLINE_DEFINED
         #endif
     #endif
-#endif
 #include <alsa/asoundlib.h>
 #if defined(MA_INLINE_DEFINED)
     #undef inline
@@ -30346,14 +30312,12 @@ to check for type safety. We cannot do this when linking at run time because the
 #ifdef MA_NO_RUNTIME_LINKING
 
 /* pulseaudio.h marks some functions with "inline" which isn't always supported. Need to emulate it. */
-#if !defined(__cplusplus)
     #if defined(__STRICT_ANSI__)
         #if !defined(inline)
             #define inline __inline__ __attribute__((always_inline))
             #define MA_INLINE_DEFINED
         #endif
     #endif
-#endif
 #include <pulse/pulseaudio.h>
 #if defined(MA_INLINE_DEFINED)
     #undef inline
@@ -40430,75 +40394,7 @@ static ma_result ma_context_enumerate_devices__opensl(ma_context* pContext, ma_e
 
     This is currently untested, so for now we are just returning default devices.
     */
-#if 0 && !defined(MA_ANDROID)
-    ma_bool32 isTerminated = MA_FALSE;
-
-    SLuint32 pDeviceIDs[128];
-    SLint32 deviceCount = sizeof(pDeviceIDs) / sizeof(pDeviceIDs[0]);
-
-    SLAudioIODeviceCapabilitiesItf deviceCaps;
-    SLresult resultSL = (*g_maEngineObjectSL)->GetInterface(g_maEngineObjectSL, (SLInterfaceID)pContext->opensl.SL_IID_AUDIOIODEVICECAPABILITIES, &deviceCaps);
-    if (resultSL != SL_RESULT_SUCCESS) {
-        /* The interface may not be supported so just report a default device. */
-        goto return_default_device;
-    }
-
-    /* Playback */
-    if (!isTerminated) {
-        resultSL = (*deviceCaps)->GetAvailableAudioOutputs(deviceCaps, &deviceCount, pDeviceIDs);
-        if (resultSL != SL_RESULT_SUCCESS) {
-            return ma_result_from_OpenSL(resultSL);
-        }
-
-        for (SLint32 iDevice = 0; iDevice < deviceCount; ++iDevice) {
-            ma_device_info deviceInfo;
-            MA_ZERO_OBJECT(&deviceInfo);
-            deviceInfo.id.opensl = pDeviceIDs[iDevice];
-
-            SLAudioOutputDescriptor desc;
-            resultSL = (*deviceCaps)->QueryAudioOutputCapabilities(deviceCaps, deviceInfo.id.opensl, &desc);
-            if (resultSL == SL_RESULT_SUCCESS) {
-                ma_strncpy_s(deviceInfo.name, sizeof(deviceInfo.name), (const char*)desc.pDeviceName, (size_t)-1);
-
-                ma_bool32 cbResult = callback(pContext, ma_device_type_playback, &deviceInfo, pUserData);
-                if (cbResult == MA_FALSE) {
-                    isTerminated = MA_TRUE;
-                    break;
-                }
-            }
-        }
-    }
-
-    /* Capture */
-    if (!isTerminated) {
-        resultSL = (*deviceCaps)->GetAvailableAudioInputs(deviceCaps, &deviceCount, pDeviceIDs);
-        if (resultSL != SL_RESULT_SUCCESS) {
-            return ma_result_from_OpenSL(resultSL);
-        }
-
-        for (SLint32 iDevice = 0; iDevice < deviceCount; ++iDevice) {
-            ma_device_info deviceInfo;
-            MA_ZERO_OBJECT(&deviceInfo);
-            deviceInfo.id.opensl = pDeviceIDs[iDevice];
-
-            SLAudioInputDescriptor desc;
-            resultSL = (*deviceCaps)->QueryAudioInputCapabilities(deviceCaps, deviceInfo.id.opensl, &desc);
-            if (resultSL == SL_RESULT_SUCCESS) {
-                ma_strncpy_s(deviceInfo.name, sizeof(deviceInfo.name), (const char*)desc.deviceName, (size_t)-1);
-
-                ma_bool32 cbResult = callback(pContext, ma_device_type_capture, &deviceInfo, pUserData);
-                if (cbResult == MA_FALSE) {
-                    isTerminated = MA_TRUE;
-                    break;
-                }
-            }
-        }
-    }
-
-    return MA_SUCCESS;
-#else
     goto return_default_device;
-#endif
 
 return_default_device:;
     cbResult = MA_TRUE;
@@ -40576,36 +40472,7 @@ static ma_result ma_context_get_device_info__opensl(ma_context* pContext, ma_dev
 
     This is currently untested, so for now we are just returning default devices.
     */
-#if 0 && !defined(MA_ANDROID)
-    SLAudioIODeviceCapabilitiesItf deviceCaps;
-    SLresult resultSL = (*g_maEngineObjectSL)->GetInterface(g_maEngineObjectSL, (SLInterfaceID)pContext->opensl.SL_IID_AUDIOIODEVICECAPABILITIES, &deviceCaps);
-    if (resultSL != SL_RESULT_SUCCESS) {
-        /* The interface may not be supported so just report a default device. */
-        goto return_default_device;
-    }
-
-    if (deviceType == ma_device_type_playback) {
-        SLAudioOutputDescriptor desc;
-        resultSL = (*deviceCaps)->QueryAudioOutputCapabilities(deviceCaps, pDeviceID->opensl, &desc);
-        if (resultSL != SL_RESULT_SUCCESS) {
-            return ma_result_from_OpenSL(resultSL);
-        }
-
-        ma_strncpy_s(pDeviceInfo->name, sizeof(pDeviceInfo->name), (const char*)desc.pDeviceName, (size_t)-1);
-    } else {
-        SLAudioInputDescriptor desc;
-        resultSL = (*deviceCaps)->QueryAudioInputCapabilities(deviceCaps, pDeviceID->opensl, &desc);
-        if (resultSL != SL_RESULT_SUCCESS) {
-            return ma_result_from_OpenSL(resultSL);
-        }
-
-        ma_strncpy_s(pDeviceInfo->name, sizeof(pDeviceInfo->name), (const char*)desc.deviceName, (size_t)-1);
-    }
-
-    goto return_detailed_info;
-#else
     goto return_default_device;
-#endif
 
 return_default_device:
     if (pDeviceID != NULL) {
@@ -41490,9 +41357,6 @@ static ma_bool32 ma_is_capture_supported__webaudio()
     }, 0) != 0; /* Must pass in a dummy argument for C99 compatibility. */
 }
 
-#ifdef __cplusplus
-extern "C" {
-#endif
 void* EMSCRIPTEN_KEEPALIVE ma_malloc_emscripten(size_t sz, const ma_allocation_callbacks* pAllocationCallbacks)
 {
     return ma_malloc(sz, pAllocationCallbacks);
@@ -41512,9 +41376,6 @@ void EMSCRIPTEN_KEEPALIVE ma_device_process_pcm_frames_playback__webaudio(ma_dev
 {
     ma_device_handle_backend_data_callback(pDevice, pFrames, NULL, (ma_uint32)frameCount);
 }
-#ifdef __cplusplus
-}
-#endif
 
 static ma_result ma_context_enumerate_devices__webaudio(ma_context* pContext, ma_enum_devices_callback_proc callback, void* pUserData)
 {
@@ -61864,9 +61725,6 @@ Decoding and Encoding Headers. These are auto-generated from a tool.
 /* dr_wav_h begin */
 #ifndef ma_dr_wav_h
 #define ma_dr_wav_h
-#ifdef __cplusplus
-extern "C" {
-#endif
 #define MA_DR_WAV_STRINGIFY(x)      #x
 #define MA_DR_WAV_XSTRINGIFY(x)     MA_DR_WAV_STRINGIFY(x)
 #define MA_DR_WAV_VERSION_MAJOR     0
@@ -62286,9 +62144,6 @@ MA_API ma_int64 ma_dr_wav_bytes_to_s64(const ma_uint8* data);
 MA_API float ma_dr_wav_bytes_to_f32(const ma_uint8* data);
 MA_API ma_bool32 ma_dr_wav_guid_equal(const ma_uint8 a[16], const ma_uint8 b[16]);
 MA_API ma_bool32 ma_dr_wav_fourcc_equal(const ma_uint8* a, const char* b);
-#ifdef __cplusplus
-}
-#endif
 #endif
 /* dr_wav_h end */
 #endif  /* MA_NO_WAV */
@@ -62297,9 +62152,6 @@ MA_API ma_bool32 ma_dr_wav_fourcc_equal(const ma_uint8* a, const char* b);
 /* dr_flac_h begin */
 #ifndef ma_dr_flac_h
 #define ma_dr_flac_h
-#ifdef __cplusplus
-extern "C" {
-#endif
 #define MA_DR_FLAC_STRINGIFY(x)      #x
 #define MA_DR_FLAC_XSTRINGIFY(x)     MA_DR_FLAC_STRINGIFY(x)
 #define MA_DR_FLAC_VERSION_MAJOR     0
@@ -62576,9 +62428,6 @@ typedef struct
 } ma_dr_flac_cuesheet_track;
 MA_API void ma_dr_flac_init_cuesheet_track_iterator(ma_dr_flac_cuesheet_track_iterator* pIter, ma_uint32 trackCount, const void* pTrackData);
 MA_API ma_bool32 ma_dr_flac_next_cuesheet_track(ma_dr_flac_cuesheet_track_iterator* pIter, ma_dr_flac_cuesheet_track* pCuesheetTrack);
-#ifdef __cplusplus
-}
-#endif
 #endif
 /* dr_flac_h end */
 #endif  /* MA_NO_FLAC */
@@ -62593,9 +62442,6 @@ MA_API ma_bool32 ma_dr_flac_next_cuesheet_track(ma_dr_flac_cuesheet_track_iterat
 /* dr_mp3_h begin */
 #ifndef ma_dr_mp3_h
 #define ma_dr_mp3_h
-#ifdef __cplusplus
-extern "C" {
-#endif
 #define MA_DR_MP3_STRINGIFY(x)      #x
 #define MA_DR_MP3_XSTRINGIFY(x)     MA_DR_MP3_STRINGIFY(x)
 #define MA_DR_MP3_VERSION_MAJOR     0
@@ -62723,9 +62569,6 @@ MA_API ma_int16* ma_dr_mp3_open_file_and_read_pcm_frames_s16(const char* filePat
 #endif
 MA_API void* ma_dr_mp3_malloc(size_t sz, const ma_allocation_callbacks* pAllocationCallbacks);
 MA_API void ma_dr_mp3_free(void* p, const ma_allocation_callbacks* pAllocationCallbacks);
-#ifdef __cplusplus
-}
-#endif
 #endif
 /* dr_mp3_h end */
 #endif  /* MA_NO_MP3 */

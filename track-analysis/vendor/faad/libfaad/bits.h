@@ -31,9 +31,6 @@
 #ifndef __BITS_H__
 #define __BITS_H__
 
-#ifdef __cplusplus
-extern "C" {
-#endif
 
 #include "analysis.h"
 #ifdef ANALYSIS
@@ -416,7 +413,4 @@ static INLINE int8_t get1bit_hcr(bits_t *ld, uint8_t *result)
 #endif
 
 
-#ifdef __cplusplus
-}
-#endif
 #endif

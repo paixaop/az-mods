@@ -28,20 +28,7 @@ terms of the MIT license. A copy of the license can be found in the file
 // instead of passing the memory order as a parameter.
 // -----------------------------------------------------------------------------------------------
 
-#if defined(__cplusplus)
-// Use C++ atomics
-#include <atomic>
-#define  _Atomic(tp)              std::atomic<tp>
-#define  mi_atomic(name)          std::atomic_##name
-#define  mi_memory_order(name)    std::memory_order_##name
-#if (__cplusplus >= 202002L)      // c++20, see issue #571
- #define MI_ATOMIC_VAR_INIT(x)    x
-#elif !defined(ATOMIC_VAR_INIT)
- #define MI_ATOMIC_VAR_INIT(x)    x
-#else
- #define MI_ATOMIC_VAR_INIT(x)    ATOMIC_VAR_INIT(x)
-#endif
-#elif defined(_MSC_VER)
+#if   defined(_MSC_VER)
 // Use MSVC C wrapper for C11 atomics
 #define  _Atomic(tp)              tp
 #define  MI_ATOMIC_VAR_INIT(x)    x
@@ -97,7 +84,7 @@ static inline intptr_t mi_atomic_addi(_Atomic(intptr_t)*p, intptr_t add);
 static inline intptr_t mi_atomic_subi(_Atomic(intptr_t)*p, intptr_t sub);
 
 
-#if defined(__cplusplus) || !defined(_MSC_VER)
+#if !defined(_MSC_VER)
 
 // In C++/C11 atomics we have polymorphic atomics so can use the typed `ptr` variants (where `tp` is the type of atomic value)
 // We use these macros so we can provide a typed wrapper in MSVC in C compilation mode as well
@@ -105,17 +92,6 @@ static inline intptr_t mi_atomic_subi(_Atomic(intptr_t)*p, intptr_t sub);
 #define mi_atomic_load_ptr_relaxed(tp,p)                mi_atomic_load_relaxed(p)
 
 // In C++ we need to add casts to help resolve templates if NULL is passed
-#if defined(__cplusplus)
-#define mi_atomic_store_ptr_release(tp,p,x)             mi_atomic_store_release(p,(tp*)x)
-#define mi_atomic_store_ptr_relaxed(tp,p,x)             mi_atomic_store_relaxed(p,(tp*)x)
-#define mi_atomic_cas_ptr_weak_release(tp,p,exp,des)    mi_atomic_cas_weak_release(p,exp,(tp*)des)
-#define mi_atomic_cas_ptr_weak_acq_rel(tp,p,exp,des)    mi_atomic_cas_weak_acq_rel(p,exp,(tp*)des)
-#define mi_atomic_cas_ptr_strong_release(tp,p,exp,des)  mi_atomic_cas_strong_release(p,exp,(tp*)des)
-#define mi_atomic_cas_ptr_strong_acq_rel(tp,p,exp,des)  mi_atomic_cas_strong_acq_rel(p,exp,(tp*)des)
-#define mi_atomic_exchange_ptr_relaxed(tp,p,x)          mi_atomic_exchange_relaxed(p,(tp*)x)
-#define mi_atomic_exchange_ptr_release(tp,p,x)          mi_atomic_exchange_release(p,(tp*)x)
-#define mi_atomic_exchange_ptr_acq_rel(tp,p,x)          mi_atomic_exchange_acq_rel(p,(tp*)x)
-#else
 #define mi_atomic_store_ptr_release(tp,p,x)             mi_atomic_store_release(p,x)
 #define mi_atomic_store_ptr_relaxed(tp,p,x)             mi_atomic_store_relaxed(p,x)
 #define mi_atomic_cas_ptr_weak_release(tp,p,exp,des)    mi_atomic_cas_weak_release(p,exp,des)
@@ -125,7 +101,6 @@ static inline intptr_t mi_atomic_subi(_Atomic(intptr_t)*p, intptr_t sub);
 #define mi_atomic_exchange_ptr_relaxed(tp,p,x)          mi_atomic_exchange_relaxed(p,x)
 #define mi_atomic_exchange_ptr_release(tp,p,x)          mi_atomic_exchange_release(p,x)
 #define mi_atomic_exchange_ptr_acq_rel(tp,p,x)          mi_atomic_exchange_acq_rel(p,x)
-#endif
 
 // These are used by the statistics
 static inline int64_t mi_atomic_addi64_relaxed(volatile int64_t* p, int64_t add) {
@@ -358,12 +333,7 @@ typedef _Atomic(uintptr_t) mi_atomic_guard_t;
 // Yield
 // ----------------------------------------------------------------------
 
-#if defined(__cplusplus)
-#include <thread>
-static inline void mi_atomic_yield(void) {
-  std::this_thread::yield();
-}
-#elif defined(_WIN32)
+#if   defined(_WIN32)
 static inline void mi_atomic_yield(void) {
   YieldProcessor();
 }
@@ -501,27 +471,6 @@ static inline void mi_lock_init(mi_lock_t* lock) {
 }
 static inline void mi_lock_done(mi_lock_t* lock) {
   pthread_mutex_destroy(lock);
-}
-
-#elif defined(__cplusplus)
-
-#include <mutex>
-#define mi_lock_t  std::mutex
-
-static inline bool mi_lock_try_acquire(mi_lock_t* lock) {
-  return lock->try_lock();
-}
-static inline void mi_lock_acquire(mi_lock_t* lock) {
-  lock->lock();
-}
-static inline void mi_lock_release(mi_lock_t* lock) {
-  lock->unlock();
-}
-static inline void mi_lock_init(mi_lock_t* lock) {
-  (void)(lock);
-}
-static inline void mi_lock_done(mi_lock_t* lock) {
-  (void)(lock);
 }
 
 #else

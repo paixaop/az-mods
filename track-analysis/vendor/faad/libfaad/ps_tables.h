@@ -31,9 +31,6 @@
 #ifndef __PS_TABLES_H__
 #define __PS_TABLES_H__
 
-#ifdef __cplusplus
-extern "C" {
-#endif
 
 #ifdef _MSC_VER
 #pragma warning(disable:4305)
@@ -543,8 +540,5 @@ static const real_t sf_iid_fine[] = {
     COEF_CONST(0.0044721137)
 };
 
-#ifdef __cplusplus
-}
-#endif
 #endif
 

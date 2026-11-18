@@ -31,9 +31,6 @@
 #ifndef __SSR_FB_H__
 #define __SSR_FB_H__
 
-#ifdef __cplusplus
-extern "C" {
-#endif
 
 fb_info *ssr_filter_bank_init(uint16_t frame_len);
 void ssr_filter_bank_end(fb_info *fb);
@@ -47,7 +44,4 @@ void ssr_ifilter_bank(fb_info *fb,
                       real_t *time_out,
                       uint16_t frame_len);
 
-#ifdef __cplusplus
-}
-#endif
 #endif

@@ -102,9 +102,6 @@ typedef void* mi_nothrow_t;
     MI_INTERPOSE_MI(aligned_alloc),
   };
 
-  #ifdef __cplusplus
-  extern "C" {
-  #endif
   void  _ZdlPv(void* p);   // delete
   void  _ZdaPv(void* p);   // delete[]
   void  _ZdlPvm(void* p, size_t n);  // delete
@@ -113,9 +110,6 @@ typedef void* mi_nothrow_t;
   void* _Znam(size_t n);  // new[]
   void* _ZnwmRKSt9nothrow_t(size_t n, mi_nothrow_t tag); // new nothrow
   void* _ZnamRKSt9nothrow_t(size_t n, mi_nothrow_t tag); // new[] nothrow
-  #ifdef __cplusplus
-  }
-  #endif
   __attribute__((used)) static struct mi_interpose_s _mi_cxx_interposes[]  __attribute__((section("__DATA, __interpose"))) =
   {
     MI_INTERPOSE_FUN(_ZdlPv,mi_free),
@@ -156,44 +150,7 @@ typedef void* mi_nothrow_t;
 // This is not really necessary as they usually call
 // malloc/free anyway, but it improves performance.
 // ------------------------------------------------------
-#ifdef __cplusplus
-  // ------------------------------------------------------
-  // With a C++ compiler we override the new/delete operators.
-  // see <https://en.cppreference.com/w/cpp/memory/new/operator_new>
-  // ------------------------------------------------------
-  #include <new>
-
-  #ifndef MI_OSX_IS_INTERPOSED
-    void operator delete(void* p) noexcept              MI_FORWARD0(mi_free,p)
-    void operator delete[](void* p) noexcept            MI_FORWARD0(mi_free,p)
-
-    void* operator new(std::size_t n) noexcept(false)   MI_FORWARD1(mi_new,n)
-    void* operator new[](std::size_t n) noexcept(false) MI_FORWARD1(mi_new,n)
-
-    void* operator new  (std::size_t n, const std::nothrow_t& tag) noexcept { MI_UNUSED(tag); return mi_new_nothrow(n); }
-    void* operator new[](std::size_t n, const std::nothrow_t& tag) noexcept { MI_UNUSED(tag); return mi_new_nothrow(n); }
-
-    #if (__cplusplus >= 201402L || _MSC_VER >= 1916)
-    void operator delete  (void* p, std::size_t n) noexcept MI_FORWARD02(mi_free_size,p,n)
-    void operator delete[](void* p, std::size_t n) noexcept MI_FORWARD02(mi_free_size,p,n)
-    #endif
-  #endif
-
-  #if (__cplusplus > 201402L && defined(__cpp_aligned_new)) && (!defined(__GNUC__) || (__GNUC__ > 5))
-  void operator delete  (void* p, std::align_val_t al) noexcept { mi_free_aligned(p, static_cast<size_t>(al)); }
-  void operator delete[](void* p, std::align_val_t al) noexcept { mi_free_aligned(p, static_cast<size_t>(al)); }
-  void operator delete  (void* p, std::size_t n, std::align_val_t al) noexcept { mi_free_size_aligned(p, n, static_cast<size_t>(al)); };
-  void operator delete[](void* p, std::size_t n, std::align_val_t al) noexcept { mi_free_size_aligned(p, n, static_cast<size_t>(al)); };
-  void operator delete  (void* p, std::align_val_t al, const std::nothrow_t&) noexcept { mi_free_aligned(p, static_cast<size_t>(al)); }
-  void operator delete[](void* p, std::align_val_t al, const std::nothrow_t&) noexcept { mi_free_aligned(p, static_cast<size_t>(al)); }
-
-  void* operator new( std::size_t n, std::align_val_t al)   noexcept(false) { return mi_new_aligned(n, static_cast<size_t>(al)); }
-  void* operator new[]( std::size_t n, std::align_val_t al) noexcept(false) { return mi_new_aligned(n, static_cast<size_t>(al)); }
-  void* operator new  (std::size_t n, std::align_val_t al, const std::nothrow_t&) noexcept { return mi_new_aligned_nothrow(n, static_cast<size_t>(al)); }
-  void* operator new[](std::size_t n, std::align_val_t al, const std::nothrow_t&) noexcept { return mi_new_aligned_nothrow(n, static_cast<size_t>(al)); }
-  #endif
-
-#elif (defined(__GNUC__) || defined(__clang__))
+#if   (defined(__GNUC__) || defined(__clang__))
   // ------------------------------------------------------
   // Override by defining the mangled C++ names of the operators (as
   // used by GCC and CLang).
@@ -236,15 +193,12 @@ typedef void* mi_nothrow_t;
   #else
     #error "define overloads for new/delete for this platform (just for performance, can be skipped)"
   #endif
-#endif // __cplusplus
+#endif
 
 // ------------------------------------------------------
 // Further Posix & Unix functions definitions
 // ------------------------------------------------------
 
-#ifdef __cplusplus
-extern "C" {
-#endif
 
 #ifndef MI_OSX_IS_INTERPOSED
   // Forward Posix/Unix calls as well
@@ -305,9 +259,6 @@ mi_decl_weak int reallocarr(void* p, size_t count, size_t size)    { return mi_r
   int   __posix_memalign(void** p, size_t alignment, size_t size) { return mi_posix_memalign(p,alignment,size); }
 #endif
 
-#ifdef __cplusplus
-}
-#endif
 
 #if (defined(__GNUC__) || defined(__clang__)) && !defined(__APPLE__)
 #pragma GCC visibility pop

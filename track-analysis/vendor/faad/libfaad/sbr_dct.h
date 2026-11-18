@@ -31,9 +31,6 @@
 #ifndef __SBR_DCT_H__
 #define __SBR_DCT_H__
 
-#ifdef __cplusplus
-extern "C" {
-#endif
 
 void dct4_kernel(real_t * in_real, real_t * in_imag, real_t * out_real, real_t * out_imag);
 
@@ -45,8 +42,5 @@ void DCT4_16(real_t *y, real_t *x);
 void DCT2_16_unscaled(real_t *y, real_t *x);
 
 
-#ifdef __cplusplus
-}
-#endif
 #endif
 

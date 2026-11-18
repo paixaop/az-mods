@@ -31,9 +31,6 @@
 #ifndef __ANALYSIS_H__
 #define __ANALYSIS_H__
 
-#ifdef __cplusplus
-extern "C" {
-#endif
 
 
 #ifdef ANALYSIS
@@ -46,7 +43,4 @@ extern uint16_t dbg_count;
 #endif
 
 
-#ifdef __cplusplus
-}
-#endif
 #endif

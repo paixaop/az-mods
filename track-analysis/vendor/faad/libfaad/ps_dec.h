@@ -31,9 +31,6 @@
 #ifndef __PS_DEC_H__
 #define __PS_DEC_H__
 
-#ifdef __cplusplus
-extern "C" {
-#endif
 
 #include "bits.h"
 
@@ -148,8 +145,5 @@ void ps_free(ps_info *ps);
 uint8_t ps_decode(ps_info *ps, qmf_t X_left[38][64], qmf_t X_right[38][64]);
 
 
-#ifdef __cplusplus
-}
-#endif
 #endif
 
