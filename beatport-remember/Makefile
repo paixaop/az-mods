@@ -39,7 +39,7 @@ ifeq ($(origin CC),default)
 CC := gcc
 endif
 CFLAGS  := -std=gnu11 -O2 -Wall -Wextra -Werror=implicit-function-declaration \
-           -fPIC -fvisibility=hidden -fno-omit-frame-pointer \
+           -fPIC -fvisibility=hidden -fno-omit-frame-pointer -fno-optimize-sibling-calls \
            -fexceptions -fasynchronous-unwind-tables \
            -I$(AZ_SDK_INCLUDE)
 LDFLAGS := -shared -static-libgcc -Wl,--no-undefined -Wl,--hash-style=gnu

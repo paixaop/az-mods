@@ -10,7 +10,7 @@ SANITIZE ?=
 CPPFLAGS += -D_POSIX_C_SOURCE=200809L -D_DARWIN_C_SOURCE -I$(AZ_SDK_INCLUDE) \
             -Ianalysis -Ianalysis/dsp/include -Ivendor/faad/include -Ivendor/faad/libfaad -Ivendor/mimalloc/include
 CFLAGS += -std=c11 -O2 -Wall -Wextra -Werror -fPIC -fvisibility=hidden \
-          -ffp-contract=off -fno-omit-frame-pointer -fexceptions -fasynchronous-unwind-tables -pthread
+          -ffp-contract=off -fno-omit-frame-pointer -fno-optimize-sibling-calls -fexceptions -fasynchronous-unwind-tables -pthread
 LDLIBS += -lm -pthread
 ifneq ($(SANITIZE),)
 CFLAGS += -g -fsanitize=$(SANITIZE) -fno-sanitize-recover=all
