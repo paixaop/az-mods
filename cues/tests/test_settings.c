@@ -64,7 +64,7 @@ static void draw_text(az_draw *d, int x, int y, const char *s, int px, uint32_t 
 {
     (void)d;
     (void)rgb;
-    az_rect r = {x, y, text_width(s, px), px * 3 / 2};
+    az_rect r = { x, y, text_width(s, px), px * 3 / 2 };
     rect_check(r.x, r.y, r.w, r.h);
     for (int i = 0; i < text_count; i++) {
         az_rect b = texts[i];
@@ -91,7 +91,7 @@ static void changed(void)
 static az_draw d;
 static void paint(int w, int h)
 {
-    bounds = (az_rect){37, 81, w, h};
+    bounds = (az_rect){ 37, 81, w, h };
     text_count = 0;
     screen.on_draw(&d, bounds, NULL);
     for (int i = 0; i < hit_count; i++) {
@@ -107,7 +107,7 @@ static void paint(int w, int h)
 static void tap_hit(int i)
 {
     az_rect r = hits[i].rect;
-    az_event e = {.kind = AZ_EV_TAP, .x = r.x + r.w / 2, .y = r.y + r.h / 2};
+    az_event e = { .kind = AZ_EV_TAP, .x = r.x + r.w / 2, .y = r.y + r.h / 2 };
     assert(screen.on_input(&e, NULL));
     assert(!hit_count);
 }
@@ -181,15 +181,22 @@ static void check_pad_field(int disabled, const char *display)
 }
 int main(void)
 {
-    az_core_v1 core = {.size = sizeof core,
-                       .abi = AZ_MOD_ABI,
-                       .draw_text = draw_text,
-                       .fill_rect = fill,
-                       .draw_rect = rect,
-                       .color = palette,
-                       .text_width = text_width,
-                       .request_redraw = redraw_request};
+    az_core_v1 core = { .size = sizeof core,
+                        .abi = AZ_MOD_ABI,
+                        .draw_text = draw_text,
+                        .fill_rect = fill,
+                        .draw_rect = rect,
+                        .color = palette,
+                        .text_width = text_width,
+                        .request_redraw = redraw_request };
     assert(cues_settings_init(&core, changed));
+    int status_redraws = redraws;
+    cues_settings_status("Waiting for analysis");
+    assert(redraws == status_redraws + 1 && !strcmp(runtime_status, "Waiting for analysis"));
+    cues_settings_status("Waiting for analysis");
+    assert(redraws == status_redraws + 1);
+    cues_settings_status(NULL);
+    assert(redraws == status_redraws + 2 && !runtime_status[0]);
     screen.on_enter(NULL);
     paint(800, 420);
     press_action(A_NEW_GROUP);
@@ -282,7 +289,7 @@ int main(void)
     press_action(A_DELETE_GROUP);
     assert(view == DELETE_GROUP && config.group_count == 1);
     paint(800, 420);
-    az_event back = {.kind = AZ_EV_BACK};
+    az_event back = { .kind = AZ_EV_BACK };
     assert(screen.on_input(&back, NULL));
     assert(config.group_count == 1);
     go(DELETE_GROUP);
@@ -297,8 +304,7 @@ int main(void)
     cues_rule_default(&config.groups[0].rules[0], &config.groups[0]);
     group_index = rule_index = 0;
     assert(screen.flags & AZ_SCREEN_DEDICATED);
-    const int sizes[][2] = {{1216, 535}, {1280, 800}, {1280, 420}, {800, 420}, {640, 300},
-                            {480, 240},  {320, 240},  {240, 180}, {120, 80}};
+    const int sizes[][2] = { { 1216, 535 }, { 1280, 800 }, { 1280, 420 }, { 800, 420 }, { 640, 300 }, { 480, 240 }, { 320, 240 }, { 240, 180 }, { 120, 80 } };
     for (unsigned z = 0; z < sizeof sizes / sizeof sizes[0]; z++)
         for (int v = 0; v <= DELETE_RULE; v++)
             for (int anchor = 0; anchor < 2; anchor++) {
@@ -322,15 +328,54 @@ int main(void)
     view = GLOBAL;
     page = 0;
     paint(800, 420);
-    az_event knob = {.kind = AZ_EV_KNOB, .dir = 1};
+    az_event knob = { .kind = AZ_EV_KNOB, .dir = 1 };
     int old_focus = focus;
     assert(screen.on_input(&knob, NULL));
     assert(focus != (old_focus));
     paint(800, 420);
-    az_event click = {.kind = AZ_EV_CLICK};
+    az_event click = { .kind = AZ_EV_CLICK };
     assert(screen.on_input(&click, NULL));
+    screen.on_enter(NULL);
+    paint(800, 420);
+    press(H_TAB, 1);
+    assert(view == GLOBAL);
+    press_field("Maximum memory cues");
+    assert(keyboard && numeric && key_field.kind == F_INT);
+    strcpy(key_buffer, "3.5");
+    paint(800, 420);
+    press(H_KEY_SAVE, 0);
+    assert(keyboard && strstr(key_error, "integer"));
+    strcpy(key_buffer, "9");
+    paint(800, 420);
+    press(H_KEY_SAVE, 0);
+    assert(!keyboard && config.max_memory == 9);
+    paint(800, 420);
+    press(H_TAB, 0);
+    press_action(A_OPEN_GROUP);
+    press_field("Group name");
+    paint(240, 180);
+    int old_key_page = key_page;
+    press(H_KEY_PAGE, 1);
+    assert(key_page == old_key_page + 1);
+    paint(240, 180);
+    press(H_KEY_CANCEL, 0);
+    assert(!keyboard && view == GROUP);
+    press_action(A_RULES);
+    press_action(A_OPEN_RULE);
+    assert(view == RULE && config.groups[0].rule_count == 1);
+    press_action(A_DELETE_RULE);
+    assert(view == DELETE_RULE && config.groups[0].rule_count == 1);
+    press_action(A_CONFIRM_RULE);
+    assert(view == RULES && !config.groups[0].rule_count);
+    paint(800, 420);
+    press(H_BACK, 0);
+    assert(view == GROUP);
+    paint(800, 420);
+    press(H_BACK, 0);
+    assert(view == GROUPS);
     assert(redraws > 0);
-    puts("Settings passed: staged Apply, discard/save, CRUD, text/numeric keyboard, knob, touch "
-         "bounds and paging");
+    puts(
+        "Settings passed: staged Apply, discard/save, CRUD, text/numeric keyboard, knob, touch "
+        "bounds and paging");
     return 0;
 }

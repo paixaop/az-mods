@@ -13,7 +13,14 @@ static unsigned active_revision, saved_revision;
 static int dirty, draft_pending, storage_ok;
 static char storage_status[160], runtime_status[160];
 static const az_screen_v1 screen;
-enum { GROUPS, GROUP, RULES, RULE, GLOBAL, FILES, DELETE_GROUP, DELETE_RULE };
+enum { GROUPS,
+       GROUP,
+       RULES,
+       RULE,
+       GLOBAL,
+       FILES,
+       DELETE_GROUP,
+       DELETE_RULE };
 static int view, group_index, rule_index, page, focus;
 static az_rect area;
 typedef struct {
@@ -22,8 +29,18 @@ typedef struct {
 } hit;
 static hit hits[128];
 static int hit_count;
-enum { H_TAB, H_FIELD, H_PAGE, H_BACK, H_KEY, H_KEY_PAGE, H_KEY_SAVE, H_KEY_CANCEL };
-enum { F_INT, F_DOUBLE, F_TEXT, F_ACTION };
+enum { H_TAB,
+       H_FIELD,
+       H_PAGE,
+       H_BACK,
+       H_KEY,
+       H_KEY_PAGE,
+       H_KEY_SAVE,
+       H_KEY_CANCEL };
+enum { F_INT,
+       F_DOUBLE,
+       F_TEXT,
+       F_ACTION };
 enum {
     A_NEW_GROUP = 1,
     A_OPEN_GROUP,
@@ -53,16 +70,16 @@ static int field_count;
 static int keyboard, numeric, key_page, key_return_view, key_return_page;
 static char key_label[64], key_buffer[128], key_error[128];
 static field key_field;
-static const char *const onoff[] = {"Off", "On"};
-static const char *const qnames[] = {"Inherit", "Off", "Beat", "Bar"};
-static const char *const unit_names[] = {"Bars", "Beats", "Seconds"};
-static const char *const anchor_names[] = {"Phrase", "Absolute"};
-static const char *const cue_names[] = {"Hot cue", "Memory cue"};
-static const char *const points[] = {"Start", "Middle", "End"};
-static const char *const loops[] = {"Off", "Fixed length", "From phrase start", "To phrase end"};
-static const char *const pads[] = {"A", "B", "C", "D", "E", "F", "G", "H"};
-static const char *const indexes[] = {"All", "1st", "2nd", "3rd", "4th", "5th",
-                                      "6th", "7th", "8th", "9th", "10th"};
+static const char *const onoff[] = { "Off", "On" };
+static const char *const qnames[] = { "Inherit", "Off", "Beat", "Bar" };
+static const char *const unit_names[] = { "Bars", "Beats", "Seconds" };
+static const char *const anchor_names[] = { "Phrase", "Absolute" };
+static const char *const cue_names[] = { "Hot cue", "Memory cue" };
+static const char *const points[] = { "Start", "Middle", "End" };
+static const char *const loops[] = { "Off", "Fixed length", "From phrase start", "To phrase end" };
+static const char *const pads[] = { "A", "B", "C", "D", "E", "F", "G", "H" };
+static const char *const indexes[] = { "All", "1st", "2nd", "3rd", "4th", "5th",
+                                       "6th", "7th", "8th", "9th", "10th" };
 static const char characters[] =
     "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789 {}:._-/+()#&'?!,=@";
 static const char digits[] = "0123456789.-";
@@ -99,22 +116,27 @@ static int width(const char *s, int px)
     int w = C->text_width(s, px);
     return w > 0 ? w : (int)strlen(s) * px * 3 / 5;
 }
+static void fit_label(char *text, int px, int available)
+{
+    for (unsigned char *p = (unsigned char *)text; *p; p++)
+        if (*p < 32)
+            *p = ' ';
+    size_t len = strlen(text);
+    while (len && width(text, px) > available) {
+        do {
+            len--;
+        } while (len && ((unsigned char)text[len] & 0xc0) == 0x80);
+        text[len] = 0;
+    }
+}
+
 static void label(az_draw *d, az_rect r, const char *s, int px, uint32_t col)
 {
     if (r.w <= 0 || r.h < px * 3 / 2 || !s)
         return;
     char text[256];
     snprintf(text, sizeof text, "%s", s);
-    for (unsigned char *p = (unsigned char *)text; *p; p++)
-        if (*p < 32)
-            *p = ' ';
-    size_t len = strlen(text);
-    while (len && width(text, px) > r.w) {
-        do {
-            len--;
-        } while (len && ((unsigned char)text[len] & 0xc0) == 0x80);
-        text[len] = 0;
-    }
+    fit_label(text, px, r.w);
     if (text[0])
         C->draw_text(d, r.x, r.y + (r.h - px * 3 / 2) / 2, text, px, col);
 }
@@ -128,14 +150,14 @@ static void button(az_draw *d, az_rect r, const char *s, int kind, int arg, int 
     C->draw_rect(d, r.x, r.y, r.w, r.h, 1,
                  active || selected ? color(AZ_COL_HI)
                                     : blend(color(AZ_COL_BG), color(AZ_COL_TEXT), 25));
-    label(d, (az_rect){r.x + 10, r.y, r.w - 20, r.h}, s, r.w < 80 ? 12 : 14,
+    label(d, (az_rect){ r.x + 10, r.y, r.w - 20, r.h }, s, r.w < 80 ? 12 : 14,
           active ? color(AZ_COL_HI_TEXT) : color(AZ_COL_TEXT));
-    hits[hit_count++] = (hit){r, kind, arg};
+    hits[hit_count++] = (hit){ r, kind, arg };
 }
 static field *add(const char *name, int kind, void *value)
 {
     field *f = &fields[field_count++];
-    *f = (field){.label = name, .kind = kind, .value = value};
+    *f = (field){ .label = name, .kind = kind, .value = value };
     return f;
 }
 static void choice_field(const char *name, int *value, const char *const *choices, int count,
@@ -171,15 +193,114 @@ static void action(const char *name, int id, int arg)
     f->action = id;
     f->arg = arg;
 }
-static void rebuild(void)
+static void repair_group_selection(void)
 {
-    field_count = 0;
     if (group_index < 0 || group_index >= config.group_count) {
         if (view == GROUP || view == RULES || view == RULE || view == DELETE_GROUP ||
             view == DELETE_RULE)
             view = GROUPS;
         group_index = 0;
     }
+}
+static void build_groups(void)
+{
+    if (config.group_count < CUES_MAX_GROUPS)
+        action("+ Create group", A_NEW_GROUP, 0);
+    for (int i = 0; i < config.group_count; i++)
+        action(config.groups[i].name, A_OPEN_GROUP, i);
+}
+static void build_group(cues_group *g)
+{
+    action("Edit rules", A_RULES, 0);
+    choice_field("Group enabled", &g->enabled, onoff, 2, 0);
+    text_field("Group name", g->name, sizeof g->name);
+    text_field("Comment", g->comment, sizeof g->comment);
+    text_field("Artist contains", g->artist, sizeof g->artist);
+    text_field("Musical key", g->key, sizeof g->key);
+    number_field("Minimum BPM (0 = global)", &g->min_bpm, 0,
+                 g->max_bpm > 0 ? g->max_bpm : config.max_bpm, 1);
+    number_field("Maximum BPM (0 = global)", &g->max_bpm, 0, 500, 1);
+    choice_field("Quantization", &g->quantization, qnames, 4, 0);
+    choice_field("Units for new rules", &g->measures_in, unit_names, 3, 0);
+    action("Delete group...", A_DELETE_GROUP, 0);
+}
+static void build_rules(cues_group *g)
+{
+    if (g->rule_count < CUES_MAX_RULES)
+        action("+ Create rule", A_NEW_RULE, 0);
+    for (int i = 0; i < g->rule_count; i++)
+        action(g->rules[i].name[0] ? g->rules[i].name : "Untitled rule", A_OPEN_RULE, i);
+}
+static void build_rule(cues_rule *r)
+{
+    choice_field("Rule enabled", &r->enabled, onoff, 2, 0);
+    choice_field("Anchor", &r->anchor, anchor_names, 2, 0);
+    choice_field("Cue type", &r->cue_type, cue_names, 2, AZ_CUE_HOT);
+    choice_field("Hot cue pad", &r->pad, pads, 8, 1);
+    if (r->cue_type == AZ_CUE_MEMORY || cues_rule_auto_pad(r)) {
+        fields[field_count - 1].disabled = 1;
+        fields[field_count - 1].display = r->cue_type == AZ_CUE_MEMORY ? "-" : "*";
+    }
+    if (r->anchor == CUES_PHRASE) {
+        choice_field("Phrase type", &r->phrase_type, cues_phrase_names, 8, 0);
+        choice_field("Occurrence", &r->phrase_index, indexes, 11, 0);
+        choice_field("Phrase point", &r->phrase_point, points, 3, 0);
+        number_field("Offset (negative = before)", &r->offset, -86400, 86400, 1);
+        choice_field("Offset units", &r->offset_unit, unit_names, 3, 0);
+    } else {
+        number_field("Position (zero-based)", &r->position, 0, 86400, 1);
+        choice_field("Position units", &r->unit, unit_names, 3, 0);
+    }
+    choice_field("Saved loop", &r->loop_mode, loops, r->anchor == CUES_PHRASE ? 4 : 2, 0);
+    if (r->loop_mode == CUES_LOOP_FIXED) {
+        number_field("Loop length", &r->loop_length, 0.1, 86400, 1);
+        choice_field("Loop units", &r->loop_unit, unit_names, 3, 0);
+    }
+    choice_field("Cue color", &r->color, cues_color_names, 9, 0);
+    text_field("Name template", r->name, sizeof r->name);
+    text_field("Comment template", r->comment, sizeof r->comment);
+    action("Delete rule...", A_DELETE_RULE, 0);
+}
+static void build_global(void)
+{
+    choice_field("Apply on track load", &config.enabled, onoff, 2, 0);
+    integer_field("Maximum memory cues", &config.max_memory, 0, 10);
+    integer_field("Hot cue pads", &config.hot_pads, 1, 8);
+    number_field("Minimum BPM", &config.min_bpm, 1, config.max_bpm, 1);
+    number_field("Maximum BPM", &config.max_bpm, config.min_bpm, 500, 1);
+    number_field("Minimum cue distance (sec)", &config.min_distance, 0, 3600, 0.1);
+    choice_field("Collision preference", &config.cue_preference, cue_names, 2, AZ_CUE_HOT);
+    choice_field("Default quantization", &config.quantization, qnames + 1, 3, 1);
+    choice_field("Units for new groups", &config.measures_in, unit_names, 3, 0);
+}
+static void build_files(void)
+{
+    action(storage_status[0] ? storage_status : "USB configuration", 0, 0);
+    action("Apply and save changes", A_SAVE, 0);
+    action("Discard draft changes", A_DISCARD, 0);
+}
+static void build_view(cues_group *g, cues_rule *r)
+{
+    switch (view) {
+    case GROUPS: build_groups(); break;
+    case GROUP: build_group(g); break;
+    case RULES: build_rules(g); break;
+    case RULE: build_rule(r); break;
+    case GLOBAL: build_global(); break;
+    case FILES: build_files(); break;
+    case DELETE_GROUP:
+        action("Confirm: delete this group", A_CONFIRM_GROUP, 0);
+        break;
+    case DELETE_RULE:
+        action("Confirm: delete this rule", A_CONFIRM_RULE, 0);
+        break;
+    }
+}
+
+static void rebuild(void)
+{
+    field_count = 0;
+    repair_group_selection();
     cues_group *g = &config.groups[group_index];
     if (rule_index < 0 || rule_index >= g->rule_count) {
         if (view == RULE || view == DELETE_RULE)
@@ -189,85 +310,7 @@ static void rebuild(void)
     cues_rule *r = &g->rules[rule_index];
     if (view != FILES && view != DELETE_GROUP && view != DELETE_RULE)
         action(draft_pending ? "Apply draft changes" : "Apply changes", A_APPLY, 0);
-    switch (view) {
-    case GROUPS:
-        if (config.group_count < CUES_MAX_GROUPS)
-            action("+ Create group", A_NEW_GROUP, 0);
-        for (int i = 0; i < config.group_count; i++)
-            action(config.groups[i].name, A_OPEN_GROUP, i);
-        break;
-    case GROUP:
-        action("Edit rules", A_RULES, 0);
-        choice_field("Group enabled", &g->enabled, onoff, 2, 0);
-        text_field("Group name", g->name, sizeof g->name);
-        text_field("Comment", g->comment, sizeof g->comment);
-        text_field("Artist contains", g->artist, sizeof g->artist);
-        text_field("Musical key", g->key, sizeof g->key);
-        number_field("Minimum BPM (0 = global)", &g->min_bpm, 0,
-                     g->max_bpm > 0 ? g->max_bpm : config.max_bpm, 1);
-        number_field("Maximum BPM (0 = global)", &g->max_bpm, 0, 500, 1);
-        choice_field("Quantization", &g->quantization, qnames, 4, 0);
-        choice_field("Units for new rules", &g->measures_in, unit_names, 3, 0);
-        action("Delete group...", A_DELETE_GROUP, 0);
-        break;
-    case RULES:
-        if (g->rule_count < CUES_MAX_RULES)
-            action("+ Create rule", A_NEW_RULE, 0);
-        for (int i = 0; i < g->rule_count; i++)
-            action(g->rules[i].name[0] ? g->rules[i].name : "Untitled rule", A_OPEN_RULE, i);
-        break;
-    case RULE:
-        choice_field("Rule enabled", &r->enabled, onoff, 2, 0);
-        choice_field("Anchor", &r->anchor, anchor_names, 2, 0);
-        choice_field("Cue type", &r->cue_type, cue_names, 2, AZ_CUE_HOT);
-        choice_field("Hot cue pad", &r->pad, pads, 8, 1);
-        if (r->cue_type == AZ_CUE_MEMORY || cues_rule_auto_pad(r)) {
-            fields[field_count - 1].disabled = 1;
-            fields[field_count - 1].display = r->cue_type == AZ_CUE_MEMORY ? "-" : "*";
-        }
-        if (r->anchor == CUES_PHRASE) {
-            choice_field("Phrase type", &r->phrase_type, cues_phrase_names, 8, 0);
-            choice_field("Occurrence", &r->phrase_index, indexes, 11, 0);
-            choice_field("Phrase point", &r->phrase_point, points, 3, 0);
-            number_field("Offset (negative = before)", &r->offset, -86400, 86400, 1);
-            choice_field("Offset units", &r->offset_unit, unit_names, 3, 0);
-        } else {
-            number_field("Position (zero-based)", &r->position, 0, 86400, 1);
-            choice_field("Position units", &r->unit, unit_names, 3, 0);
-        }
-        choice_field("Saved loop", &r->loop_mode, loops, r->anchor == CUES_PHRASE ? 4 : 2, 0);
-        if (r->loop_mode == CUES_LOOP_FIXED) {
-            number_field("Loop length", &r->loop_length, 0.1, 86400, 1);
-            choice_field("Loop units", &r->loop_unit, unit_names, 3, 0);
-        }
-        choice_field("Cue color", &r->color, cues_color_names, 9, 0);
-        text_field("Name template", r->name, sizeof r->name);
-        text_field("Comment template", r->comment, sizeof r->comment);
-        action("Delete rule...", A_DELETE_RULE, 0);
-        break;
-    case GLOBAL:
-        choice_field("Apply on track load", &config.enabled, onoff, 2, 0);
-        integer_field("Maximum memory cues", &config.max_memory, 0, 10);
-        integer_field("Hot cue pads", &config.hot_pads, 1, 8);
-        number_field("Minimum BPM", &config.min_bpm, 1, config.max_bpm, 1);
-        number_field("Maximum BPM", &config.max_bpm, config.min_bpm, 500, 1);
-        number_field("Minimum cue distance (sec)", &config.min_distance, 0, 3600, 0.1);
-        choice_field("Collision preference", &config.cue_preference, cue_names, 2, AZ_CUE_HOT);
-        choice_field("Default quantization", &config.quantization, qnames + 1, 3, 1);
-        choice_field("Units for new groups", &config.measures_in, unit_names, 3, 0);
-        break;
-    case FILES:
-        action(storage_status[0] ? storage_status : "USB configuration", 0, 0);
-        action("Apply and save changes", A_SAVE, 0);
-        action("Discard draft changes", A_DISCARD, 0);
-        break;
-    case DELETE_GROUP:
-        action("Confirm: delete this group", A_CONFIRM_GROUP, 0);
-        break;
-    case DELETE_RULE:
-        action("Confirm: delete this rule", A_CONFIRM_RULE, 0);
-        break;
-    }
+    build_view(g, r);
 }
 static const char *title(void)
 {
@@ -345,9 +388,8 @@ static int apply_changes(void)
     }
     return 1;
 }
-static void activate_action(int id, int arg)
+static int group_action(int id, int arg)
 {
-    cues_group *g = &config.groups[group_index];
     switch (id) {
     case A_NEW_GROUP:
         group_index = config.group_count++;
@@ -356,30 +398,14 @@ static void activate_action(int id, int arg)
                  "Group %d", group_index + 1);
         modified();
         go(GROUP);
-        break;
+        return 1;
     case A_OPEN_GROUP:
         group_index = arg;
         go(GROUP);
-        break;
-    case A_RULES:
-        go(RULES);
-        break;
-    case A_NEW_RULE:
-        rule_index = g->rule_count++;
-        cues_rule_default(&g->rules[rule_index], g);
-        modified();
-        go(RULE);
-        break;
-    case A_OPEN_RULE:
-        rule_index = arg;
-        go(RULE);
-        break;
+        return 1;
     case A_DELETE_GROUP:
         go(DELETE_GROUP);
-        break;
-    case A_DELETE_RULE:
-        go(DELETE_RULE);
-        break;
+        return 1;
     case A_CONFIRM_GROUP:
         memmove(&config.groups[group_index], &config.groups[group_index + 1],
                 (size_t)(config.group_count - group_index - 1) * sizeof(cues_group));
@@ -387,7 +413,30 @@ static void activate_action(int id, int arg)
         memset(&config.groups[config.group_count], 0, sizeof(cues_group));
         modified();
         go(GROUPS);
-        break;
+        return 1;
+    default: return 0;
+    }
+}
+static int rule_action(int id, int arg)
+{
+    cues_group *g = &config.groups[group_index];
+    switch (id) {
+    case A_RULES:
+        go(RULES);
+        return 1;
+    case A_NEW_RULE:
+        rule_index = g->rule_count++;
+        cues_rule_default(&g->rules[rule_index], g);
+        modified();
+        go(RULE);
+        return 1;
+    case A_OPEN_RULE:
+        rule_index = arg;
+        go(RULE);
+        return 1;
+    case A_DELETE_RULE:
+        go(DELETE_RULE);
+        return 1;
     case A_CONFIRM_RULE:
         memmove(&g->rules[rule_index], &g->rules[rule_index + 1],
                 (size_t)(g->rule_count - rule_index - 1) * sizeof(cues_rule));
@@ -395,21 +444,48 @@ static void activate_action(int id, int arg)
         memset(&g->rules[g->rule_count], 0, sizeof(cues_rule));
         modified();
         go(RULES);
-        break;
+        return 1;
+    default: return 0;
+    }
+}
+static int publish_action(int id)
+{
+    switch (id) {
     case A_SAVE:
         if (apply_changes())
             request_save();
-        break;
+        return 1;
     case A_APPLY:
         apply_changes();
-        break;
+        return 1;
     case A_DISCARD:
         config = active_config;
         draft_pending = 0;
         go(GROUPS);
-        break;
+        return 1;
+    default: return 0;
     }
 }
+
+static void activate_action(int id, int arg)
+{
+    if (group_action(id, arg)) return;
+    if (rule_action(id, arg)) return;
+    publish_action(id);
+}
+static void cycle_choice(const field *f)
+{
+    int *value = f->value;
+    *value = *value >= f->max ? f->min : *value + 1;
+    if (view == RULE && f->value == &config.groups[group_index].rules[rule_index].anchor &&
+        *value == CUES_ABSOLUTE) {
+        cues_rule *r = &config.groups[group_index].rules[rule_index];
+        r->offset = 0;
+        if (r->loop_mode >= CUES_LOOP_FROM_START)
+            r->loop_mode = CUES_NO_LOOP;
+    }
+}
+
 static void change_field(int index)
 {
     if (index < 0 || index >= field_count)
@@ -425,48 +501,56 @@ static void change_field(int index)
         open_keyboard(f);
         return;
     }
-    int *value = f.value;
-    *value = *value >= f.max ? f.min : *value + 1;
-    if (view == RULE && f.value == &config.groups[group_index].rules[rule_index].anchor &&
-        *value == CUES_ABSOLUTE) {
-        cues_rule *r = &config.groups[group_index].rules[rule_index];
-        r->offset = 0;
-        if (r->loop_mode >= CUES_LOOP_FROM_START)
-            r->loop_mode = CUES_NO_LOOP;
-    }
+    cycle_choice(&f);
     modified();
     redraw();
 }
-static int commit_keyboard(void)
+static int commit_keyboard_integer(double v)
 {
-    cues_config previous = config;
+    if (v < key_field.min || v > key_field.max || floor(v) != v) {
+        snprintf(storage_status, sizeof storage_status, "Enter an integer from %d to %d",
+                 key_field.min, key_field.max);
+        return 0;
+    }
+    *(int *)key_field.value = (int)v;
+    return 1;
+}
+static int commit_keyboard_number(void)
+{
+    char *end;
+    double v = strtod(key_buffer, &end);
+    if (!key_buffer[0] || *end || !isfinite(v)) {
+        snprintf(storage_status, sizeof storage_status, "Enter a valid number");
+        return 0;
+    }
+    if (key_field.kind == F_INT) {
+        return commit_keyboard_integer(v);
+    } else {
+        if (v < key_field.low || v > key_field.high) {
+            snprintf(storage_status, sizeof storage_status, "Enter a value from %.9g to %.9g",
+                     key_field.low, key_field.high);
+            return 0;
+        }
+        *(double *)key_field.value = v;
+    }
+    return 1;
+}
+static int commit_keyboard_value(void)
+{
     if (key_field.kind == F_TEXT) {
         if (strlen(key_buffer) >= key_field.capacity)
             return 0;
         snprintf(key_field.value, key_field.capacity, "%s", key_buffer);
     } else {
-        char *end;
-        double v = strtod(key_buffer, &end);
-        if (!key_buffer[0] || *end || !isfinite(v)) {
-            snprintf(storage_status, sizeof storage_status, "Enter a valid number");
-            return 0;
-        }
-        if (key_field.kind == F_INT) {
-            if (v < key_field.min || v > key_field.max || floor(v) != v) {
-                snprintf(storage_status, sizeof storage_status, "Enter an integer from %d to %d",
-                         key_field.min, key_field.max);
-                return 0;
-            }
-            *(int *)key_field.value = (int)v;
-        } else {
-            if (v < key_field.low || v > key_field.high) {
-                snprintf(storage_status, sizeof storage_status, "Enter a value from %.9g to %.9g",
-                         key_field.low, key_field.high);
-                return 0;
-            }
-            *(double *)key_field.value = v;
-        }
+        return commit_keyboard_number();
     }
+    return 1;
+}
+
+static int commit_keyboard(void)
+{
+    cues_config previous = config;
+    if (!commit_keyboard_value()) return 0;
     char error[128];
     if (!cues_config_validate(&config, error, sizeof error)) {
         config = previous;
@@ -479,11 +563,22 @@ static int commit_keyboard(void)
     modified();
     return 1;
 }
+static void key_caption(char text[8], int i, const char *chars)
+{
+    int arg = i - 2;
+    if (i == 0)
+        snprintf(text, 8, "Del");
+    else if (i == 1)
+        snprintf(text, 8, "SP");
+    else
+        snprintf(text, 8, "%c", chars[arg]);
+}
+
 static void draw_keyboard(az_draw *d, az_rect a)
 {
-    label(d, (az_rect){a.x + 8, a.y + 3, a.w - 16, 24}, key_error[0] ? key_error : key_label, 14,
+    label(d, (az_rect){ a.x + 8, a.y + 3, a.w - 16, 24 }, key_error[0] ? key_error : key_label, 14,
           color(AZ_COL_TEXT_DIM));
-    label(d, (az_rect){a.x + 8, a.y + 29, a.w - 16, 30}, key_buffer[0] ? key_buffer : "(empty)", 16,
+    label(d, (az_rect){ a.x + 8, a.y + 29, a.w - 16, 30 }, key_buffer[0] ? key_buffer : "(empty)", 16,
           color(AZ_COL_TEXT));
     int cols = (a.w - 16) / 48;
     if (cols < 1)
@@ -501,21 +596,129 @@ static void draw_keyboard(az_draw *d, az_rect a)
     for (int i = first; i < count && i < first + per; i++) {
         char text[8];
         int arg = i - 2;
-        if (i == 0)
-            snprintf(text, sizeof text, "Del");
-        else if (i == 1)
-            snprintf(text, sizeof text, "SP");
-        else
-            snprintf(text, sizeof text, "%c", chars[arg]);
+        key_caption(text, i, chars);
         int cell = i - first;
-        button(d, (az_rect){a.x + 8 + (cell % cols) * 48, a.y + 64 + (cell / cols) * 48, 44, 44},
+        button(d, (az_rect){ a.x + 8 + (cell % cols) * 48, a.y + 64 + (cell / cols) * 48, 44, 44 },
                text, H_KEY, arg, 0);
     }
     int bw = (a.w - 28) / 4, y = a.y + a.h - 48;
-    button(d, (az_rect){a.x + 8, y, bw, 44}, "Cancel", H_KEY_CANCEL, 0, 0);
-    button(d, (az_rect){a.x + 12 + bw, y, bw, 44}, "<", H_KEY_PAGE, -1, 0);
-    button(d, (az_rect){a.x + 16 + 2 * bw, y, bw, 44}, ">", H_KEY_PAGE, 1, 0);
-    button(d, (az_rect){a.x + 20 + 3 * bw, y, bw, 44}, "Save", H_KEY_SAVE, 0, 1);
+    button(d, (az_rect){ a.x + 8, y, bw, 44 }, "Cancel", H_KEY_CANCEL, 0, 0);
+    button(d, (az_rect){ a.x + 12 + bw, y, bw, 44 }, "<", H_KEY_PAGE, -1, 0);
+    button(d, (az_rect){ a.x + 16 + 2 * bw, y, bw, 44 }, ">", H_KEY_PAGE, 1, 0);
+    button(d, (az_rect){ a.x + 20 + 3 * bw, y, bw, 44 }, "Save", H_KEY_SAVE, 0, 1);
+}
+static void field_value(const field *f, char *value, size_t capacity)
+{
+    if (f->display)
+        snprintf(value, capacity, "%s", f->display);
+    else if (f->kind == F_TEXT)
+        snprintf(value, capacity, "%s",
+                 ((char *)f->value)[0] ? (char *)f->value : "Any / empty");
+    else if (f->kind == F_DOUBLE)
+        snprintf(value, capacity, "%.9g", *(double *)f->value);
+    else if (f->choices)
+        snprintf(value, capacity, "%s", f->choices[*(int *)f->value - f->min]);
+    else
+        snprintf(value, capacity, "%d", *(int *)f->value);
+}
+static void draw_action_row(az_draw *d, int left, int y, int content, int i, const field *f)
+{
+    char value[192];
+    snprintf(value, sizeof value, "%s", f->label);
+    if (view == GROUPS && f->action == A_OPEN_GROUP)
+        snprintf(value, sizeof value, "%s  /  %d rules%s", f->label,
+                 config.groups[f->arg].rule_count,
+                 config.groups[f->arg].enabled ? "" : "  (off)");
+    if (view == RULES && f->action == A_OPEN_RULE) {
+        const cues_rule *r = &config.groups[group_index].rules[f->arg];
+        snprintf(value, sizeof value, "%s / %s / %s", f->label,
+                 r->anchor == CUES_PHRASE ? "Phrase" : "Absolute",
+                 r->cue_type == AZ_CUE_HOT ? "Hot cue" : "Memory");
+    }
+    button(d, (az_rect){ left, y, content, 44 }, value, H_FIELD, i, 0);
+}
+static void draw_field_row(az_draw *d, int left, int y, int content, int compact, int i)
+{
+    field f = fields[i];
+    if (f.kind == F_ACTION) {
+        draw_action_row(d, left, y, content, i, &f);
+        return;
+    }
+    int lw = compact ? content * 44 / 100 : content * 42 / 100;
+    label(d, (az_rect){ left, y, lw - 10, 44 }, f.label, compact ? 12 : 15,
+          color(AZ_COL_TEXT_DIM));
+    char value[160];
+    field_value(&f, value, sizeof value);
+    if (f.disabled) {
+        C->fill_rect(d, left + lw, y, content - lw, 44,
+                     blend(color(AZ_COL_BG), color(AZ_COL_TEXT), 3));
+        C->draw_rect(d, left + lw, y, content - lw, 44, 1,
+                     blend(color(AZ_COL_BG), color(AZ_COL_TEXT), 12));
+        label(d, (az_rect){ left + lw + 10, y, content - lw - 20, 44 }, value,
+              content - lw < 80 ? 12 : 14, color(AZ_COL_TEXT_DIM));
+    } else
+        button(d, (az_rect){ left + lw, y, content - lw, 44 }, value, H_FIELD, i, 0);
+}
+static void draw_rows(az_draw *d, int left, int content, int compact, int row_top, int row_h, int visible)
+{
+    for (int i = page * visible; i < field_count && i < (page + 1) * visible; i++)
+        draw_field_row(d, left, row_top + (i - page * visible) * row_h, content, compact, i);
+}
+
+static void draw_tabs(az_draw *d, az_rect a, int left, int content, int compact)
+{
+    int tabs_x = compact ? left : left + content - 468, tabs_w = compact ? (content - 8) / 3 : 152;
+    if (!compact)
+        label(d, (az_rect){ left, a.y + 4, content - 484, 44 }, "Cues", 26, color(AZ_COL_TEXT));
+    int tab = view == GLOBAL ? 1 : view == FILES ? 2
+                                                 : 0;
+    button(d, (az_rect){ tabs_x, a.y + 4, tabs_w, 44 }, "Groups", H_TAB, 0, tab == 0);
+    button(d, (az_rect){ tabs_x + tabs_w + 4, a.y + 4, tabs_w, 44 }, "Config", H_TAB, 1, tab == 1);
+    button(d, (az_rect){ tabs_x + 2 * (tabs_w + 4), a.y + 4, tabs_w, 44 }, "Files", H_TAB, 2,
+           tab == 2);
+}
+
+static void draw_title(az_draw *d, az_rect a, int left, int content, int compact, int pages)
+{
+    label(d, (az_rect){ left, a.y + 51, compact ? content - 60 : content, 24 }, title(), 16,
+          color(AZ_COL_TEXT));
+    if (compact) {
+        char count[24];
+        snprintf(count, sizeof count, "%d/%d", page + 1, pages);
+        label(d, (az_rect){ left + content - 48, a.y + 51, 48, 24 }, count, 12,
+              color(AZ_COL_TEXT_DIM));
+    }
+}
+
+static void draw_footer(az_draw *d, az_rect a, int left, int content, int compact, int pages)
+{
+    int fy = a.y + a.h - 48, bw = compact ? 52 : 92;
+    button(d, (az_rect){ left, fy, bw, 44 }, "Back", H_BACK, 0, 0);
+    button(d, (az_rect){ left + content - 2 * bw - 4, fy, bw, 44 }, "<", H_PAGE, -1, 0);
+    button(d, (az_rect){ left + content - bw, fy, bw, 44 }, ">", H_PAGE, 1, 0);
+    char summary[320];
+    snprintf(summary, sizeof summary, "%d/%d  %s", page + 1, pages,
+             draft_pending ? "Draft changes; Apply when ready" : storage_status);
+    int statusw = content - 3 * bw - 20;
+    if (statusw > 40)
+        label(d, (az_rect){ left + bw + 10, fy, statusw, 22 }, summary, 11, color(AZ_COL_TEXT_DIM));
+    if (statusw > 40)
+        label(d, (az_rect){ left + bw + 10, fy + 22, statusw, 22 },
+              runtime_status[0]       ? runtime_status
+              : active_config.enabled ? "Preserves existing cues"
+                                      : "Automatic placement off",
+              11, color(AZ_COL_TEXT_DIM));
+}
+
+static int visible_rows(az_rect bounds)
+{
+    int visible = (bounds.h - 140) / 52;
+    return visible < 1 ? 1 : visible;
+}
+static int field_pages(int visible)
+{
+    int pages = (field_count + visible - 1) / visible;
+    return pages < 1 ? 1 : pages;
 }
 static void draw(az_draw *d, az_rect a, void *unused)
 {
@@ -538,119 +741,21 @@ static void draw(az_draw *d, az_rect a, void *unused)
         left += (content - 1120) / 2;
         content = 1120;
     }
-    int tabs_x = compact ? left : left + content - 468, tabs_w = compact ? (content - 8) / 3 : 152;
-    if (!compact)
-        label(d, (az_rect){left, a.y + 4, content - 484, 44}, "Cues", 26, color(AZ_COL_TEXT));
-    int tab = view == GLOBAL ? 1 : view == FILES ? 2 : 0;
-    button(d, (az_rect){tabs_x, a.y + 4, tabs_w, 44}, "Groups", H_TAB, 0, tab == 0);
-    button(d, (az_rect){tabs_x + tabs_w + 4, a.y + 4, tabs_w, 44}, "Config", H_TAB, 1, tab == 1);
-    button(d, (az_rect){tabs_x + 2 * (tabs_w + 4), a.y + 4, tabs_w, 44}, "Files", H_TAB, 2,
-           tab == 2);
-    int row_top = a.y + 82, row_h = 52, visible = (a.h - 140) / row_h;
-    if (visible < 1)
-        visible = 1;
-    int pages = (field_count + visible - 1) / visible;
-    if (pages < 1)
-        pages = 1;
+    draw_tabs(d, a, left, content, compact);
+    int row_top = a.y + 82, row_h = 52, visible = visible_rows(a);
+    int pages = field_pages(visible);
     if (page >= pages)
         page = pages - 1;
-    label(d, (az_rect){left, a.y + 51, compact ? content - 60 : content, 24}, title(), 16,
-          color(AZ_COL_TEXT));
-    if (compact) {
-        char count[24];
-        snprintf(count, sizeof count, "%d/%d", page + 1, pages);
-        label(d, (az_rect){left + content - 48, a.y + 51, 48, 24}, count, 12,
-              color(AZ_COL_TEXT_DIM));
-    }
-    for (int i = page * visible; i < field_count && i < (page + 1) * visible; i++) {
-        field f = fields[i];
-        int y = row_top + (i - page * visible) * row_h;
-        if (f.kind == F_ACTION) {
-            char value[192];
-            snprintf(value, sizeof value, "%s", f.label);
-            if (view == GROUPS && f.action == A_OPEN_GROUP)
-                snprintf(value, sizeof value, "%s  /  %d rules%s", f.label,
-                         config.groups[f.arg].rule_count,
-                         config.groups[f.arg].enabled ? "" : "  (off)");
-            if (view == RULES && f.action == A_OPEN_RULE) {
-                const cues_rule *r = &config.groups[group_index].rules[f.arg];
-                snprintf(value, sizeof value, "%s / %s / %s", f.label,
-                         r->anchor == CUES_PHRASE ? "Phrase" : "Absolute",
-                         r->cue_type == AZ_CUE_HOT ? "Hot cue" : "Memory");
-            }
-            button(d, (az_rect){left, y, content, 44}, value, H_FIELD, i, 0);
-            continue;
-        }
-        int lw = compact ? content * 44 / 100 : content * 42 / 100;
-        label(d, (az_rect){left, y, lw - 10, 44}, f.label, compact ? 12 : 15,
-              color(AZ_COL_TEXT_DIM));
-        char value[160];
-        if (f.display)
-            snprintf(value, sizeof value, "%s", f.display);
-        else if (f.kind == F_TEXT)
-            snprintf(value, sizeof value, "%s",
-                     ((char *)f.value)[0] ? (char *)f.value : "Any / empty");
-        else if (f.kind == F_DOUBLE)
-            snprintf(value, sizeof value, "%.9g", *(double *)f.value);
-        else if (f.choices)
-            snprintf(value, sizeof value, "%s", f.choices[*(int *)f.value - f.min]);
-        else
-            snprintf(value, sizeof value, "%d", *(int *)f.value);
-        if (f.disabled) {
-            C->fill_rect(d, left + lw, y, content - lw, 44,
-                         blend(color(AZ_COL_BG), color(AZ_COL_TEXT), 3));
-            C->draw_rect(d, left + lw, y, content - lw, 44, 1,
-                         blend(color(AZ_COL_BG), color(AZ_COL_TEXT), 12));
-            label(d, (az_rect){left + lw + 10, y, content - lw - 20, 44}, value,
-                  content - lw < 80 ? 12 : 14, color(AZ_COL_TEXT_DIM));
-        } else
-            button(d, (az_rect){left + lw, y, content - lw, 44}, value, H_FIELD, i, 0);
-    }
-    int fy = a.y + a.h - 48, bw = compact ? 52 : 92;
-    button(d, (az_rect){left, fy, bw, 44}, "Back", H_BACK, 0, 0);
-    button(d, (az_rect){left + content - 2 * bw - 4, fy, bw, 44}, "<", H_PAGE, -1, 0);
-    button(d, (az_rect){left + content - bw, fy, bw, 44}, ">", H_PAGE, 1, 0);
-    char summary[320];
-    snprintf(summary, sizeof summary, "%d/%d  %s", page + 1, pages,
-             draft_pending ? "Draft changes; Apply when ready" : storage_status);
-    int statusw = content - 3 * bw - 20;
-    if (statusw > 40)
-        label(d, (az_rect){left + bw + 10, fy, statusw, 22}, summary, 11, color(AZ_COL_TEXT_DIM));
-    if (statusw > 40)
-        label(d, (az_rect){left + bw + 10, fy + 22, statusw, 22},
-              runtime_status[0]       ? runtime_status
-              : active_config.enabled ? "Preserves existing cues"
-                                      : "Automatic placement off",
-              11, color(AZ_COL_TEXT_DIM));
+    draw_title(d, a, left, content, compact, pages);
+    draw_rows(d, left, content, compact, row_top, row_h, visible);
+    draw_footer(d, a, left, content, compact, pages);
     if (focus >= hit_count)
         focus = 0;
 }
-static int input(const az_event *e, void *unused)
+static int input_hit(const az_event *e, hit *h)
 {
-    (void)unused;
-    if (!e || !C)
-        return 0;
-    if (e->kind == AZ_EV_BACK) {
-        if (keyboard) {
-            keyboard = 0;
-            redraw();
-            return 1;
-        }
-        if (view == GROUPS)
-            return 0;
-        go(parent_view());
-        return 1;
-    }
-    if (area.w < 240 || area.h < 180 || !hit_count)
-        return 0;
-    if (e->kind == AZ_EV_KNOB) {
-        focus = (focus + (e->dir < 0 ? -1 : 1) + hit_count) % hit_count;
-        C->request_redraw();
-        return 1;
-    }
-    hit h;
     if (e->kind == AZ_EV_CLICK) {
-        h = hits[focus];
+        *h = hits[focus];
     } else if (e->kind == AZ_EV_TAP) {
         int found = -1;
         for (int i = 0; i < hit_count; i++) {
@@ -663,58 +768,48 @@ static int input(const az_event *e, void *unused)
         if (found < 0)
             return 0;
         focus = found;
-        h = hits[found];
+        *h = hits[found];
     } else
         return 0;
-    switch (h.kind) {
-    case H_TAB:
-        go(h.arg == 0 ? GROUPS : h.arg == 1 ? GLOBAL : FILES);
-        break;
-    case H_FIELD:
-        change_field(h.arg);
-        break;
-    case H_PAGE: {
-        int visible = (area.h - 140) / 52;
-        if (visible < 1)
-            visible = 1;
-        int pages = (field_count + visible - 1) / visible;
-        if (pages < 1)
-            pages = 1;
-        page = (page + h.arg + pages) % pages;
-        break;
-    }
-    case H_BACK:
-        if (view != GROUPS)
-            go(parent_view());
-        else
-            return 0;
-        break;
-    case H_KEY:
-        if (h.arg == -2) {
-            size_t n = strlen(key_buffer);
-            if (n) {
-                do {
-                    n--;
-                } while (n && ((unsigned char)key_buffer[n] & 0xc0) == 0x80);
-                key_buffer[n] = 0;
-            }
-        } else {
-            size_t n = strlen(key_buffer), limit = numeric ? sizeof key_buffer : key_field.capacity;
-            if (n + 1 < limit) {
-                key_buffer[n] = h.arg == -1 ? ' ' : (numeric ? digits : characters)[h.arg];
-                key_buffer[n + 1] = 0;
-            }
+    return 1;
+}
+static void move_page(int direction)
+{
+    int pages = field_pages(visible_rows(area));
+    page = (page + direction + pages) % pages;
+}
+static void edit_key(int key)
+{
+    if (key == -2) {
+        size_t n = strlen(key_buffer);
+        if (n) {
+            do {
+                n--;
+            } while (n && ((unsigned char)key_buffer[n] & 0xc0) == 0x80);
+            key_buffer[n] = 0;
         }
-        break;
-    case H_KEY_PAGE: {
-        int cols = (area.w - 16) / 48, rows = (area.h - 116) / 48;
-        if (rows < 1)
-            rows = 1;
-        int per = cols * rows, count = (int)strlen(numeric ? digits : characters) + 2,
-            pages = (count + per - 1) / per;
-        key_page = (key_page + h.arg + pages) % pages;
-        break;
+    } else {
+        size_t n = strlen(key_buffer), limit = numeric ? sizeof key_buffer : key_field.capacity;
+        if (n + 1 < limit) {
+            key_buffer[n] = key == -1 ? ' ' : (numeric ? digits : characters)[key];
+            key_buffer[n + 1] = 0;
+        }
     }
+}
+static void move_key_page(int direction)
+{
+    int cols = (area.w - 16) / 48, rows = (area.h - 116) / 48;
+    if (rows < 1)
+        rows = 1;
+    int per = cols * rows, count = (int)strlen(numeric ? digits : characters) + 2,
+        pages = (count + per - 1) / per;
+    key_page = (key_page + direction + pages) % pages;
+}
+static void activate_key(hit h)
+{
+    switch (h.kind) {
+    case H_KEY: edit_key(h.arg); break;
+    case H_KEY_PAGE: move_key_page(h.arg); break;
     case H_KEY_SAVE:
         if (!commit_keyboard())
             snprintf(key_error, sizeof key_error, "%s", storage_status);
@@ -725,6 +820,63 @@ static int input(const az_event *e, void *unused)
         page = key_return_page;
         break;
     }
+}
+static int activate_hit(hit h)
+{
+    switch (h.kind) {
+    case H_TAB:
+        go(h.arg == 0 ? GROUPS : h.arg == 1 ? GLOBAL
+                                            : FILES);
+        break;
+    case H_FIELD:
+        change_field(h.arg);
+        break;
+    case H_PAGE: move_page(h.arg); break;
+    case H_BACK:
+        if (view != GROUPS)
+            go(parent_view());
+        else
+            return 0;
+        break;
+    default: activate_key(h); break;
+    }
+    return 1;
+}
+
+static int input_back(void)
+{
+    if (keyboard) {
+        keyboard = 0;
+        redraw();
+        return 1;
+    }
+    if (view == GROUPS)
+        return 0;
+    go(parent_view());
+    return 1;
+}
+static int input_ready(void)
+{
+    return area.w >= 240 && area.h >= 180 && hit_count;
+}
+static int input(const az_event *e, void *unused)
+{
+    (void)unused;
+    if (!e || !C)
+        return 0;
+    if (e->kind == AZ_EV_BACK) {
+        return input_back();
+    }
+    if (!input_ready())
+        return 0;
+    if (e->kind == AZ_EV_KNOB) {
+        focus = (focus + (e->dir < 0 ? -1 : 1) + hit_count) % hit_count;
+        C->request_redraw();
+        return 1;
+    }
+    hit h;
+    if (!input_hit(e, &h)) return 0;
+    if (!activate_hit(h)) return 0;
     redraw();
     return 1;
 }
@@ -734,7 +886,7 @@ static void enter(void *unused)
     keyboard = 0;
     view = GROUPS;
     page = focus = hit_count = 0;
-    area = (az_rect){0};
+    area = (az_rect){ 0 };
 }
 const az_screen_v1 *cues_settings_init(const az_core_v1 *core, void (*changed)(void))
 {
@@ -789,6 +941,9 @@ void cues_settings_tick(void)
     }
 }
 static const az_screen_v1 screen = {
-    .size = sizeof screen, .on_draw = draw, .on_input = input, .on_enter = enter,
+    .size = sizeof screen,
+    .on_draw = draw,
+    .on_input = input,
+    .on_enter = enter,
     .flags = AZ_SCREEN_DEDICATED,
 };

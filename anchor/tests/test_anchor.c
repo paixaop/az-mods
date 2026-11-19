@@ -7,7 +7,13 @@
 #include "azmod-timestamps.h"
 #include "guide.h"
 
-#define CHECK(x) do { if (!(x)) { printf("FAIL line %d: %s\n", __LINE__, #x); return 1; } } while (0)
+#define CHECK(x)                                        \
+    do {                                                \
+        if (!(x)) {                                     \
+            printf("FAIL line %d: %s\n", __LINE__, #x); \
+            return 1;                                   \
+        }                                               \
+    } while (0)
 #define TRACK_RATE 48000
 
 static int same_time(uint64_t first, uint64_t second, unsigned rate)
@@ -30,20 +36,84 @@ static an_deck_t deck(uint32_t pos, int playing)
     return d;
 }
 
+static int fallback_targets(void)
+{
+    an_beat_t beats[257];
+    for (unsigned i = 0; i < 257; i++) beats[i] = (an_beat_t){ i * 500, 12000, i % 4 + 1 };
+    an_analysis_t grid = { .beats = beats, .nbeats = 257 };
+    an_target_opts_t opts = { .rule = AN_RULE_GRID16 };
+    an_cand_t target, candidates[4];
+    CHECK(an_auto_target(&grid, 1000, &opts, &target) == 0);
+    CHECK(same_time(target.ms, 32000, TRACK_RATE) && !strcmp(target.label, "16-BAR"));
+    CHECK(an_candidates(&grid, 1000, TRACK_RATE, &opts, candidates, 4) == 3);
+    for (unsigned i = 0; i < 3; i++) CHECK(same_time(candidates[i].ms, (i + 1) * 32000, TRACK_RATE));
+    opts.rule = AN_RULE_GRID32;
+    CHECK(an_auto_target(&grid, 1000, &opts, &target) == 0);
+    CHECK(same_time(target.ms, 64000, TRACK_RATE));
+    CHECK(an_auto_target(&grid, 128000, &opts, &target) < 0);
+    grid.nbeats = 0;
+    CHECK(an_auto_target(&grid, 0, &opts, &target) < 0);
+    const an_cue_t cues[] = { { .time_ms = 1000, .slot = 1, .label = "DROP" },
+                              { .time_ms = 5000, .label = "BREAK" } };
+    an_analysis_t cue_only = { .cues = cues, .ncues = 2 };
+    CHECK(an_find_drop(&cue_only, 0, &target) == 0);
+    CHECK(same_time(target.ms, 1000, TRACK_RATE) && !strcmp(target.label, "HC1 DROP"));
+    CHECK(an_find_drop(&cue_only, 2000, &target) == 0);
+    CHECK(same_time(target.ms, 5000, TRACK_RATE) && !strcmp(target.label, "CUE BREAK"));
+    CHECK(an_find_drop(&cue_only, 6000, &target) < 0);
+    static const char *const names[] = { "PHRASE", "INTRO", "BUILD", "BREAK", "CHORUS", "OUTRO", "VERSE", "BRIDGE" };
+    for (unsigned i = 0; i < sizeof names / sizeof names[0]; i++) CHECK(!strcmp(an_category_name(i), names[i]));
+    CHECK(an_phrase_category(1, 2) == AN_CAT_BUILD && an_phrase_category(2, 2) == AN_CAT_VERSE);
+    CHECK(an_phrase_category(3, 9) == AN_CAT_CHORUS && an_phrase_category(0, 5) == AN_CAT_CHORUS);
+    CHECK(an_phrase_category(1, 40) == AN_CAT_OTHER && an_phrase_category(0, 2) == AN_CAT_OTHER);
+    return 0;
+}
+
+static int unavailable_and_phase_errors(void)
+{
+    an_deck_t a = deck(1000, 1), b = deck(1000, 1);
+    an_loop_t loop = { .valid = 1, .in_ms = 0, .out_ms = 8000, .len_ms = 8000 };
+    an_cand_t target = { .ms = 8000, .label = "DROP" };
+    an_plan_t p;
+    an_plan_target(NULL, &b, &loop, 16000, "TARGET", &target, 0, &p);
+    CHECK(p.state == AN_ST_NEED_TRACKS && !p.action && !p.valid);
+    a.loaded = 0;
+    an_plan_target(&a, &b, &loop, 16000, "TARGET", &target, 0, &p);
+    CHECK(p.state == AN_ST_NEED_TRACKS && strstr(p.line2, "LOAD A AND B"));
+    a = deck(2000, 1);
+    an_plan_target(&a, &b, &loop, 16000, "TARGET", &target, 0, &p);
+    CHECK(p.state == AN_ST_OFF && strstr(p.line2, "LATE BY 1000"));
+    a.pos_ms = 0;
+    an_plan_target(&a, &b, &loop, 16000, "TARGET", &target, 0, &p);
+    CHECK(p.state == AN_ST_OFF && strstr(p.line2, "EARLY BY 1000"));
+    a.pos_ms = 1000;
+    target.ms = 32000;
+    an_plan_target(&a, &b, &loop, 8000, "TARGET", &target, 0, &p);
+    CHECK(p.state == AN_ST_MISSED && strstr(p.line2, "NEXT WINDOW"));
+    return 0;
+}
+
 int main(void)
 {
+    CHECK(fallback_targets() == 0);
+    CHECK(unavailable_and_phase_errors() == 0);
     an_beat_t beats[40];
-    for (unsigned i = 0; i < 40; i++) beats[i] = (an_beat_t){i * 500, 12000, i % 4 + 1};
+    for (unsigned i = 0; i < 40; i++) beats[i] = (an_beat_t){ i * 500, 12000, i % 4 + 1 };
     const an_phrase_t phrases[] = {
-        {0, 4000, AN_CAT_INTRO, 0},
-        {4000, 8000, AN_CAT_BUILD, 1},
-        {8000, 12000, AN_CAT_CHORUS, 1},
-        {12000, 16000, AN_CAT_CHORUS, 1},
-        {16000, 19500, AN_CAT_OUTRO, 1},
+        { 0, 4000, AN_CAT_INTRO, 0 },
+        { 4000, 8000, AN_CAT_BUILD, 1 },
+        { 8000, 12000, AN_CAT_CHORUS, 1 },
+        { 12000, 16000, AN_CAT_CHORUS, 1 },
+        { 16000, 19500, AN_CAT_OUTRO, 1 },
     };
-    const an_cue_t cues[] = {{.time_ms = 10000, .slot = 1}};
+    const an_cue_t cues[] = { { .time_ms = 10000, .slot = 1 } };
     const an_analysis_t a = {
-        .beats = beats, .nbeats = 40, .phrases = phrases, .nphrases = 5, .cues = cues, .ncues = 1,
+        .beats = beats,
+        .nbeats = 40,
+        .phrases = phrases,
+        .nphrases = 5,
+        .cues = cues,
+        .ncues = 1,
     };
 
     an_target_opts_t o = { AN_RULE_PHRASE, AN_CAT_CHORUS, AN_POINT_END, 1, 1, 1 };
@@ -103,7 +173,7 @@ int main(void)
     an_loop_t loop;
     memset(&loop, 0, sizeof loop);
     an_plan_t p;
-    const an_cand_t destination = {.ms = 8000, .label = "CHORUS"};
+    const an_cand_t destination = { .ms = 8000, .label = "CHORUS" };
     an_plan_target(&A, &B, &loop, 16000, "CHORUS END", &destination, 0, &p);
     CHECK(p.state == AN_ST_SINGLE);
     CHECK(p.action == 1);

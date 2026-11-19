@@ -3,27 +3,29 @@
 #include "internal.h"
 #include <assert.h>
 #include <sys/stat.h>
-static void path(char out[1200], const char *root, const char *file) {
+static void path(char out[1200], const char *root, const char *file)
+{
     assert(snprintf(out, 1200, "%s/%s", root, file) < 1200);
 }
-static void decode_checks(const char *fixtures) {
+static void decode_checks(const char *fixtures)
+{
     static const struct {
         const char *file;
         unsigned rate;
         uint64_t frames, edit, presentation;
     } cases[] = {
-        {"AAC/lc-44100-2.m4a", 44100, 45 * 1024, 1024, 44100},
-        {"AAC/lc-44100-2.aac", 44100, 45 * 1024, 0, 0},
-        {"AAC/lc-48000-1.m4a", 48000, 48 * 1024, 1024, 48000},
-        {"AAC/lc-48000-1.aac", 48000, 48 * 1024, 0, 0},
-        {"AAC/apple-lc-44100-2.m4a", 44100, 47 * 1024, 2112, 45056},
-        {"AAC/apple-lc-44100-2.aac", 44100, 47 * 1024, 0, 0},
-        {"NativePhraseMP3/cbr-info-44100-2.mp3", 44100, 89856, 0, 0},
-        {"NativePhraseMP3/cbr-info-48000-1.mp3", 48000, 99072, 0, 0},
-        {"NativePhraseMP3/no-info-44100-2.mp3", 44100, 89856, 0, 0},
-        {"NativePhraseMP3/no-info-48000-1.mp3", 48000, 97920, 0, 0},
-        {"NativePhraseMP3/vbr-xing-44100-2.mp3", 44100, 89856, 0, 0},
-        {"NativePhraseMP3/vbr-xing-48000-1.mp3", 48000, 99072, 0, 0},
+        { "AAC/lc-44100-2.m4a", 44100, 45 * 1024, 1024, 44100 },
+        { "AAC/lc-44100-2.aac", 44100, 45 * 1024, 0, 0 },
+        { "AAC/lc-48000-1.m4a", 48000, 48 * 1024, 1024, 48000 },
+        { "AAC/lc-48000-1.aac", 48000, 48 * 1024, 0, 0 },
+        { "AAC/apple-lc-44100-2.m4a", 44100, 47 * 1024, 2112, 45056 },
+        { "AAC/apple-lc-44100-2.aac", 44100, 47 * 1024, 0, 0 },
+        { "NativePhraseMP3/cbr-info-44100-2.mp3", 44100, 89856, 0, 0 },
+        { "NativePhraseMP3/cbr-info-48000-1.mp3", 48000, 99072, 0, 0 },
+        { "NativePhraseMP3/no-info-44100-2.mp3", 44100, 89856, 0, 0 },
+        { "NativePhraseMP3/no-info-48000-1.mp3", 48000, 97920, 0, 0 },
+        { "NativePhraseMP3/vbr-xing-44100-2.mp3", 44100, 89856, 0, 0 },
+        { "NativePhraseMP3/vbr-xing-48000-1.mp3", 48000, 99072, 0, 0 },
     };
     for (size_t k = 0; k < sizeof cases / sizeof *cases; k++) {
         char file[1200];
@@ -47,7 +49,7 @@ static void decode_checks(const char *fixtures) {
         assert(ta_decode_seek(d, 0) == 0 && ta_decode_read(d, block, 1024) == 1024);
         assert(!memcmp(block, pcm, sizeof block));
         if (k < 6) {
-            ta_decode_clock clock = {0};
+            ta_decode_clock clock = { 0 };
             ta_decode_get_clock(d, &clock);
             assert(clock.kind == TA_DECODE_AAC_ENCODED);
             assert(compare_timestamps(clock.decoder_leading_frames, UINT64_C(1024), rate, rate,
@@ -64,7 +66,7 @@ static void decode_checks(const char *fixtures) {
         ta_decode_close(d);
         free(pcm);
     }
-    const char *bad[] = {"AAC/unsupported-he-aac.m4a", "NativePhraseMP3/mixed-format.mp3"};
+    const char *bad[] = { "AAC/unsupported-he-aac.m4a", "NativePhraseMP3/mixed-format.mp3" };
     for (unsigned i = 0; i < 2; i++) {
         char file[1200];
         path(file, fixtures, bad[i]);
@@ -77,15 +79,17 @@ static void decode_checks(const char *fixtures) {
 struct cancel_state {
     unsigned calls, after;
 };
-static int cancel(void *user) {
+static int cancel(void *user)
+{
     struct cancel_state *s = user;
     return ++s->calls > s->after;
 }
-static void vocals_check(const char *fixtures, const char *assets) {
+static void vocals_check(const char *fixtures, const char *assets)
+{
     char audio[1200], golden[1200];
     path(audio, fixtures, "pvdi-voice.wav");
     path(golden, fixtures, "pvdi-voice.PVDI");
-    ta_request r = {.audio_path = audio, .assets_path = assets, .needed = AZ_ANALYSIS_VOCALS};
+    ta_request r = { .audio_path = audio, .assets_path = assets, .needed = AZ_ANALYSIS_VOCALS };
     ta_result *result = NULL;
     char error[160];
     int status = ta_analyze(&r, &result, error, sizeof error);
@@ -106,7 +110,7 @@ static void vocals_check(const char *fixtures, const char *assets) {
     fclose(f);
     ta_result_free(result);
     for (unsigned after = 0; after < 400; after += 79) {
-        struct cancel_state state = {.after = after};
+        struct cancel_state state = { .after = after };
         r.cancelled = cancel;
         r.user = &state;
         result = NULL;
@@ -114,15 +118,18 @@ static void vocals_check(const char *fixtures, const char *assets) {
     }
     puts("Typed vocal frames match the frozen PVDI result; cancellation releases partial work");
 }
-static void put16(FILE *f, unsigned x) {
+static void put16(FILE *f, unsigned x)
+{
     fputc(x & 255, f);
     fputc((x >> 8) & 255, f);
 }
-static void put32(FILE *f, unsigned x) {
+static void put32(FILE *f, unsigned x)
+{
     put16(f, x & 65535);
     put16(f, x >> 16);
 }
-static void phrase_check(unsigned rate) {
+static void phrase_check(unsigned rate)
+{
     char file[] = "/tmp/track-analysis-pcm-XXXXXX";
     int fd = mkstemp(file);
     assert(fd >= 0);
@@ -141,7 +148,7 @@ static void phrase_check(unsigned rate) {
     put16(f, 16);
     fwrite("data", 1, 4, f);
     put32(f, frames * 4);
-    const double levels[] = {0.1, 0.9, 0.3, 1};
+    const double levels[] = { 0.1, 0.9, 0.3, 1 };
     for (unsigned sec = 0; sec < 64; sec++)
         for (unsigned i = 0; i < rate; i++) {
             double t = (double)i / rate, pulse = exp(-fmod(t, 0.5) * 35), level = levels[sec / 16];
@@ -153,12 +160,12 @@ static void phrase_check(unsigned rate) {
     assert(!fclose(f));
     az_beat beats[256];
     for (int i = 0; i < 256; i++)
-        beats[i] = (az_beat){.time_s = i * 0.5, .bpm = 120, .beat_in_bar = i % 4 + 1};
-    ta_request r = {.audio_path = file,
-                    .beats = beats,
-                    .beat_count = 256,
-                    .needed = AZ_DATA_PHRASES,
-                    .bpm = 120};
+        beats[i] = (az_beat){ .time_s = i * 0.5, .bpm = 120, .beat_in_bar = i % 4 + 1 };
+    ta_request r = { .audio_path = file,
+                     .beats = beats,
+                     .beat_count = 256,
+                     .needed = AZ_DATA_PHRASES,
+                     .bpm = 120 };
     ta_result *result = NULL;
     char error[160];
     int status = ta_analyze(&r, &result, error, sizeof error);
@@ -168,7 +175,7 @@ static void phrase_check(unsigned rate) {
     const az_analysis_result_v1 *v = ta_result_view(result);
     assert(v->source_frames == frames && v->source_rate == rate && v->phrases.count == 4 &&
            v->phrases.mood == 2 && v->phrases.end_beat == 128);
-    const unsigned starts[] = {1, 37, 65, 97};
+    const unsigned starts[] = { 1, 37, 65, 97 };
     for (unsigned i = 0; i < 4; i++) {
         const az_analysis_phrase_v1 *p = v->phrases.entries + i;
         assert(p->start_beat == starts[i] && p->kind == (i ? 9u : 1u));
@@ -176,7 +183,7 @@ static void phrase_check(unsigned rate) {
                !p->beat3 && !p->beat4 && !p->fill && !p->fill_start_beat);
     }
     ta_result_free(result);
-    struct cancel_state state = {.after = 400};
+    struct cancel_state state = { .after = 400 };
     r.cancelled = cancel;
     r.user = &state;
     result = NULL;
@@ -187,8 +194,27 @@ static void phrase_check(unsigned rate) {
     assert(!unlink(file));
     printf("%u Hz complete C phrase analysis matches the retained reference\n", rate);
 }
-int main(int argc, char **argv) {
+static void execution_contracts(void)
+{
+    const ta_execution invalid[] = {
+        { .mode = 99, .phrase_threads = 1, .vocal_threads = 1 },
+        { .mode = TA_STAGES_SEQUENTIAL, .phrase_threads = 0, .vocal_threads = 1 },
+        { .mode = TA_STAGES_SEQUENTIAL, .phrase_threads = 1, .vocal_threads = 0 },
+        { .mode = TA_STAGES_CONCURRENT, .phrase_threads = 2, .vocal_threads = 2 }
+    };
+    const char *messages[] = { "invalidStageMode", "invalidThreadCount", "invalidVocalThreadCount", "concurrentThreadBudgetExceeded" };
+    for (unsigned i = 0; i < sizeof invalid / sizeof *invalid; i++) {
+        ta_request request = { .audio_path = "unused.wav", .needed = AZ_DATA_PHRASES | AZ_ANALYSIS_VOCALS, .execution = &invalid[i] };
+        ta_result *result = NULL;
+        char error[160] = { 0 };
+        assert(ta_analyze(&request, &result, error, sizeof error) == TA_FAILED);
+        assert(!result && !strcmp(error, messages[i]));
+    }
+}
+int main(int argc, char **argv)
+{
     assert(argc == 3);
+    execution_contracts();
     decode_checks(argv[1]);
     vocals_check(argv[1], argv[2]);
     phrase_check(44100);

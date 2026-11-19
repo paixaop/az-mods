@@ -1,0 +1,6 @@
+{
+  "base": null,
+  "threshold": 10,
+  "paths": ["anchor/", "beatport-remember/", "cues/", "track-analysis/"],
+  "exclude": ["*/tests/*", "*/tools/*", "*/vendor/*", "*/out/*", "*/out-*/*", "track-analysis/analysis/dsp/miniaudio.h", "track-analysis/analysis/dsp/minimp4.h"]
+}

@@ -44,15 +44,40 @@ static void show(az_surface *s, int on) { s->shown = on; }
 static void redraw(az_surface *s) { s->redraws++; }
 static void redraw_page(void) {}
 static void draw_text(az_draw *d, int x, int y, const char *s, int px, uint32_t color)
-{ (void)d; (void)x; (void)y; (void)s; (void)px; (void)color; }
+{
+    (void)d;
+    (void)x;
+    (void)y;
+    (void)s;
+    (void)px;
+    (void)color;
+}
 static void fill(az_draw *d, int x, int y, int w, int h, uint32_t color)
-{ (void)d; (void)x; (void)y; (void)w; (void)h; (void)color; }
+{
+    (void)d;
+    (void)x;
+    (void)y;
+    (void)w;
+    (void)h;
+    (void)color;
+}
 static void rect(az_draw *d, int x, int y, int w, int h, int line, uint32_t color)
-{ (void)line; fill(d, x, y, w, h, color); }
+{
+    (void)line;
+    fill(d, x, y, w, h, color);
+}
 static int image(az_draw *d, int x, int y, const unsigned char *rgba, int w, int h)
-{ (void)rgba; fill(d, x, y, w, h, 0); return 0; }
+{
+    (void)rgba;
+    fill(d, x, y, w, h, 0);
+    return 0;
+}
 static int width(const char *s, int px) { return (int)strlen(s) * px / 2; }
-static uint32_t color(int role) { (void)role; return 0xffffff; }
+static uint32_t color(int role)
+{
+    (void)role;
+    return 0xffffff;
+}
 
 static int subscribe(const char *id, const az_deck_watch_v1 *w, az_deck_status_fn fn, void *user,
                      az_deck_subscription *out)
@@ -67,22 +92,38 @@ static int subscribe(const char *id, const az_deck_watch_v1 *w, az_deck_status_f
 }
 
 static int release(const char *id, az_deck_subscription handle)
-{ (void)id; (void)handle; return AZ_OK; }
+{
+    (void)id;
+    (void)handle;
+    return AZ_OK;
+}
 
 static const az_library_v1 *library(uint32_t abi)
 {
     static const az_library_v1 lib = {
-        .size = sizeof lib, .abi = AZ_LIBRARY_ABI,
-        .on_deck_status = subscribe, .deck_status_release = release,
+        .size = sizeof lib,
+        .abi = AZ_LIBRARY_ABI,
+        .on_deck_status = subscribe,
+        .deck_status_release = release,
     };
     return abi == AZ_LIBRARY_ABI ? &lib : NULL;
 }
 
 static const az_core_v1 core = {
-    .size = sizeof core, .abi = AZ_MOD_ABI,
-    .library_service = library, .surface_create = create, .surface_show = show,
-    .surface_place = place, .surface_redraw = redraw, .request_redraw = redraw_page,
-    .draw_text = draw_text, .fill_rect = fill, .draw_rect = rect, .draw_image = image, .text_width = width, .color = color,
+    .size = sizeof core,
+    .abi = AZ_MOD_ABI,
+    .library_service = library,
+    .surface_create = create,
+    .surface_show = show,
+    .surface_place = place,
+    .surface_redraw = redraw,
+    .request_redraw = redraw_page,
+    .draw_text = draw_text,
+    .fill_rect = fill,
+    .draw_rect = rect,
+    .draw_image = image,
+    .text_width = width,
+    .color = color,
 };
 
 typedef struct {
@@ -110,8 +151,11 @@ static void receipt(fixture_t *f, az_status_topic_v1 *topic, unsigned field,
     if (availability == AZ_AVAIL_READY) topic->valid |= bit;
     else topic->valid &= ~bit;
     *info = (az_status_field_info_v1){
-        .info = {availability, AZ_PROV_NATIVE, f->seq + 1, fixture_ms * 1000000},
-        .scope = AZ_STATUS_LOAD_SCOPE, .scope_id = f->epoch, .count = count, .provider_id = f->deck + 10,
+        .info = { availability, AZ_PROV_NATIVE, f->seq + 1, fixture_ms * 1000000 },
+        .scope = AZ_STATUS_LOAD_SCOPE,
+        .scope_id = f->epoch,
+        .count = count,
+        .provider_id = f->deck + 10,
     };
 }
 
@@ -120,7 +164,7 @@ static void receipt(fixture_t *f, az_status_topic_v1 *topic, unsigned field,
 
 static az_status_coord_v1 coordinate(const fixture_t *f, double seconds)
 {
-    return (az_status_coord_v1){.seconds = seconds, .samples = llround(seconds * f->rate), .rate_hz = f->rate};
+    return (az_status_coord_v1){ .seconds = seconds, .samples = llround(seconds * f->rate), .rate_hz = f->rate };
 }
 
 static void head(fixture_t *f, double seconds)
@@ -153,7 +197,11 @@ static void link_phrases(fixture_t *f)
 {
     az_status_field_info_v1 *info = &f->grid.current_info;
     f->phrases.current_grid = (az_status_grid_ref_v1){
-        f->epoch, info->provider_id, info->info.revision, info->info.provenance, AZ_STATUS_GRID_CURRENT,
+        f->epoch,
+        info->provider_id,
+        info->info.revision,
+        info->info.provenance,
+        AZ_STATUS_GRID_CURRENT,
     };
     FIELD(f, phrases, current_grid, PHRASES_CURRENT_GRID, AZ_AVAIL_READY, 1);
 }
@@ -161,10 +209,16 @@ static void link_phrases(fixture_t *f)
 static void loaded(fixture_t *f, unsigned deck, uint64_t epoch, int state, double pos)
 {
     uint64_t seq = f->seq;
-    *f = (fixture_t){.deck = deck, .epoch = epoch, .seq = seq, .rate = deck ? 48000 : 44100};
-#define HEADER(topic) f->topic.header = (az_status_topic_v1){.size = sizeof f->topic, .version = AZ_DATA_VERSION}
-    HEADER(load); HEADER(transport); HEADER(position); HEADER(tempo);
-    HEADER(grid); HEADER(phrases); HEADER(cues); HEADER(loop);
+    *f = (fixture_t){ .deck = deck, .epoch = epoch, .seq = seq, .rate = deck ? 48000 : 44100 };
+#define HEADER(topic) f->topic.header = (az_status_topic_v1){ .size = sizeof f->topic, .version = AZ_DATA_VERSION }
+    HEADER(load);
+    HEADER(transport);
+    HEADER(position);
+    HEADER(tempo);
+    HEADER(grid);
+    HEADER(phrases);
+    HEADER(cues);
+    HEADER(loop);
 #undef HEADER
     f->load.state = AZ_STATUS_LOAD_LOADED;
     FIELD(f, load, state, LOAD_STATE, AZ_AVAIL_READY, 1);
@@ -180,21 +234,19 @@ static void loaded(fixture_t *f, unsigned deck, uint64_t epoch, int state, doubl
     f->tempo.original_bpm = 120;
     FIELD(f, tempo, original_bpm, TEMPO_ORIGINAL_BPM, AZ_AVAIL_READY, 1);
 
-    for (unsigned i = 0; i < 257; i++) f->beats[i] = (az_beat){i * .5, 120, i % 4 + 1, 0};
-    for (unsigned i = 0; i < 4; i++) f->rows[i] = (az_phrase){i * 64, (i + 1) * 64, i % 2 ? 5 : 2, 1, 0, 0};
+    for (unsigned i = 0; i < 257; i++) f->beats[i] = (az_beat){ i * .5, 120, i % 4 + 1, 0 };
+    for (unsigned i = 0; i < 4; i++) f->rows[i] = (az_phrase){ i * 64, (i + 1) * 64, i % 2 ? 5 : 2, 1, 0, 0 };
     f->grid.current = f->beats;
     FIELD(f, grid, current, GRID_CURRENT, AZ_AVAIL_READY, 257);
     f->phrases.current = f->rows;
     FIELD(f, phrases, current, PHRASES_CURRENT, AZ_AVAIL_READY, 4);
     link_phrases(f);
 
-    f->hot[0] = (az_cue_entry){.size = sizeof *f->hot, .version = AZ_DATA_VERSION, .valid = AZ_CUE_START,
-                               .classification = AZ_CUE_HOT, .slot = 3, .start_s = 80};
+    f->hot[0] = (az_cue_entry){ .size = sizeof *f->hot, .version = AZ_DATA_VERSION, .valid = AZ_CUE_START, .classification = AZ_CUE_HOT, .slot = 3, .start_s = 80 };
     f->hot[1] = f->hot[0];
     f->hot[1].slot = 1;
     f->hot[1].start_s = 0;
-    f->memory = (az_cue_entry){.size = sizeof f->memory, .version = AZ_DATA_VERSION, .valid = AZ_CUE_START,
-                               .classification = AZ_CUE_MEMORY, .entry_id = 1, .start_s = 10};
+    f->memory = (az_cue_entry){ .size = sizeof f->memory, .version = AZ_DATA_VERSION, .valid = AZ_CUE_START, .classification = AZ_CUE_MEMORY, .entry_id = 1, .start_s = 10 };
     f->cues.live_hot = f->hot;
     f->cues.live_memory = &f->memory;
     FIELD(f, cues, live_hot, CUES_LIVE_HOT, AZ_AVAIL_READY, 2);
@@ -204,14 +256,29 @@ static void loaded(fixture_t *f, unsigned deck, uint64_t epoch, int state, doubl
 static void publish(fixture_t *f, unsigned kind, uint64_t topics)
 {
     az_deck_status_view_v1 view = {
-        .size = sizeof view, .version = AZ_DATA_VERSION,
-        .load = &f->load, .transport = &f->transport, .position = &f->position, .tempo = &f->tempo,
-        .grid = &f->grid, .phrases = &f->phrases, .cues = &f->cues, .loop = &f->loop,
+        .size = sizeof view,
+        .version = AZ_DATA_VERSION,
+        .load = &f->load,
+        .transport = &f->transport,
+        .position = &f->position,
+        .tempo = &f->tempo,
+        .grid = &f->grid,
+        .phrases = &f->phrases,
+        .cues = &f->cues,
+        .loop = &f->loop,
     };
     az_deck_status_event_v1 e = {
-        .size = sizeof e, .version = AZ_DATA_VERSION, .kind = kind, .deck = f->deck, .view = &view,
-        .subscription = 1, .sequence = ++f->seq, .load_epoch = f->epoch,
-        .topics = watch.topics, .changed_topics = topics, .published_ns = fixture_ms * 1000000,
+        .size = sizeof e,
+        .version = AZ_DATA_VERSION,
+        .kind = kind,
+        .deck = f->deck,
+        .view = &view,
+        .subscription = 1,
+        .sequence = ++f->seq,
+        .load_epoch = f->epoch,
+        .topics = watch.topics,
+        .changed_topics = topics,
+        .published_ns = fixture_ms * 1000000,
         .lost_topics = kind == AZ_STATUS_RESYNC ? topics : 0,
         .loss_reason = kind == AZ_STATUS_RESYNC ? AZ_STATUS_CAPTURE_GAP : 0,
     };
@@ -224,6 +291,86 @@ static void expect_ms(uint64_t first, uint64_t second, unsigned rate)
     assert(order != AZ_TIME_INVALID && order == AZ_TIME_EQUAL);
 }
 
+static void missing_data_and_fallbacks(void)
+{
+    fixture_t a = { 0 }, b = { 0 };
+    loaded(&a, 0, 100, AZ_PLAYBACK_PLAYING, 1);
+    loaded(&b, 1, 101, AZ_PLAYBACK_PAUSED, 16);
+    publish(&a, AZ_STATUS_INITIAL, watch.topics);
+    publish(&b, AZ_STATUS_INITIAL, watch.topics);
+    settings_set(SET_RULE, AN_RULE_PHRASE);
+    FIELD(&a, phrases, current, PHRASES_CURRENT, AZ_AVAIL_LOADING, 0);
+    publish(&a, AZ_STATUS_CHANGE, AZ_STATUS_TOPIC(AZ_STATUS_PHRASES));
+    assert(plan.notice == AN_NOTICE_READING && strstr(plan.line2, "phrase map"));
+    FIELD(&a, phrases, current, PHRASES_CURRENT, AZ_AVAIL_EMPTY, 0);
+    FIELD(&a, cues, live_hot, CUES_LIVE_HOT, AZ_AVAIL_LOADING, 0);
+    publish(&a, AZ_STATUS_CHANGE, AZ_STATUS_TOPIC(AZ_STATUS_PHRASES) | AZ_STATUS_TOPIC(AZ_STATUS_CUES));
+    assert(plan.notice == AN_NOTICE_READING && strstr(plan.line2, "Hot Cues"));
+    FIELD(&a, cues, live_hot, CUES_LIVE_HOT, AZ_AVAIL_EMPTY, 0);
+    publish(&a, AZ_STATUS_CHANGE, AZ_STATUS_TOPIC(AZ_STATUS_CUES));
+    assert(plan.notice == AN_NOTICE_ANALYSIS_A);
+    settings_set(SET_RULE, AN_RULE_HOTCUE);
+    assert(plan.notice == AN_NOTICE_NO_CUES);
+    FIELD(&a, cues, live_hot, CUES_LIVE_HOT, AZ_AVAIL_FAILED, 0);
+    publish(&a, AZ_STATUS_CHANGE, AZ_STATUS_TOPIC(AZ_STATUS_CUES));
+    assert(plan.notice == AN_NOTICE_CUES_UNAVAILABLE);
+    settings_set(SET_RULE, AN_RULE_GRID16);
+    FIELD(&a, grid, current, GRID_CURRENT, AZ_AVAIL_LOADING, 0);
+    publish(&a, AZ_STATUS_CHANGE, AZ_STATUS_TOPIC(AZ_STATUS_GRID));
+    assert(plan.notice == AN_NOTICE_READING && strstr(plan.line2, "beat grid"));
+    FIELD(&a, grid, current, GRID_CURRENT, AZ_AVAIL_EMPTY, 0);
+    publish(&a, AZ_STATUS_CHANGE, AZ_STATUS_TOPIC(AZ_STATUS_GRID));
+    assert(plan.notice == AN_NOTICE_ANALYSIS_A);
+
+    /* Saved maps work only with a saved-grid association from the same load. */
+    a.grid.saved = a.beats;
+    a.phrases.saved = a.rows;
+    FIELD(&a, grid, saved, GRID_SAVED, AZ_AVAIL_READY, 257);
+    FIELD(&a, phrases, saved, PHRASES_SAVED, AZ_AVAIL_READY, 4);
+    a.phrases.saved_grid = (az_status_grid_ref_v1){ a.epoch, a.grid.saved_info.provider_id,
+                                                    a.grid.saved_info.info.revision, AZ_PROV_NATIVE, AZ_STATUS_GRID_SAVED };
+    FIELD(&a, phrases, saved_grid, PHRASES_SAVED_GRID, AZ_AVAIL_READY, 1);
+    publish(&a, AZ_STATUS_CHANGE, AZ_STATUS_TOPIC(AZ_STATUS_GRID) | AZ_STATUS_TOPIC(AZ_STATUS_PHRASES));
+    assert(decks[0].analysis.nphrases == 4 && !decks[0].phrases_pending);
+    settings_set(SET_RULE, AN_RULE_PHRASE);
+    open_selector();
+    assert(sel_open && sel_n >= 4 && sel_deck == 0);
+    latch_candidate(0);
+    assert(!sel_open && latched_ms && plan.valid);
+
+    /* Incoming target acquisition reports missing and pending analyses distinctly. */
+    loaded(&b, 1, 102, AZ_PLAYBACK_PAUSED, 16);
+    FIELD(&b, phrases, current, PHRASES_CURRENT, AZ_AVAIL_LOADING, 0);
+    publish(&b, AZ_STATUS_INITIAL, watch.topics);
+    assert(!b_targets[1].valid && plan.notice == AN_NOTICE_READING);
+    FIELD(&b, phrases, current, PHRASES_CURRENT, AZ_AVAIL_EMPTY, 0);
+    FIELD(&b, cues, live_hot, CUES_LIVE_HOT, AZ_AVAIL_EMPTY, 0);
+    FIELD(&b, cues, live_memory, CUES_LIVE_MEMORY, AZ_AVAIL_EMPTY, 0);
+    publish(&b, AZ_STATUS_CHANGE, AZ_STATUS_TOPIC(AZ_STATUS_PHRASES) | AZ_STATUS_TOPIC(AZ_STATUS_CUES));
+    assert(!b_targets[1].valid && plan.notice == AN_NOTICE_ANALYSIS_B);
+    FIELD(&b, cues, live_hot, CUES_LIVE_HOT, AZ_AVAIL_LOADING, 0);
+    publish(&b, AZ_STATUS_CHANGE, AZ_STATUS_TOPIC(AZ_STATUS_CUES));
+    assert(plan.notice == AN_NOTICE_READING);
+
+    settings_set(SET_DISPLAY, ANCHOR_LAYOUT_SIDEBAR - 1);
+    playback(&a, AZ_PLAYBACK_PAUSED);
+    publish(&a, AZ_STATUS_CHANGE, AZ_STATUS_TOPIC(AZ_STATUS_TRANSPORT));
+    assert(plan.notice == AN_NOTICE_START_OUTGOING);
+    playback(&a, AZ_PLAYBACK_UNKNOWN);
+    publish(&a, AZ_STATUS_CHANGE, AZ_STATUS_TOPIC(AZ_STATUS_TRANSPORT));
+    assert(plan.notice == AN_NOTICE_DECK_STATE);
+
+    /* Bounded captions retain their ellipsis and never overrun the given width. */
+    char text[160];
+    fit_text(text, sizeof text, "A deliberately long target label", 12, 72);
+    assert(strstr(text, "...") && width(text, 12) <= 72);
+    fit_text(text, 5, "Long label", 12, 18);
+    assert(!strcmp(text, "..."));
+    fit_text(text, sizeof text, NULL, 12, 100);
+    assert(!text[0]);
+    assert(accent_rgb(2) == 0xffb340 && accent_rgb(3) == 0xff453a);
+}
+
 int main(void)
 {
     const az_mod_v1 *mod = az_mod_v1_entry();
@@ -234,7 +381,7 @@ int main(void)
     assert(mod->init(&core) == AZ_OK && listener && nsurfaces == 2);
     assert(!strip_shown && !tab_shown);
 
-    fixture_t a = {0}, b = {0};
+    fixture_t a = { 0 }, b = { 0 };
     loaded(&a, 0, 1, AZ_PLAYBACK_PLAYING, 1);
     loaded(&b, 1, 2, AZ_PLAYBACK_PAUSED, 16);
     publish(&a, AZ_STATUS_INITIAL, watch.topics);
@@ -286,8 +433,7 @@ int main(void)
     playback(&b, AZ_PLAYBACK_PLAYING);
     latched_ms = 33000;
     snprintf(latched_label, sizeof latched_label, "PICKED TARGET");
-    publish(&b, AZ_STATUS_CHANGE, AZ_STATUS_TOPIC(AZ_STATUS_TRANSPORT) | AZ_STATUS_TOPIC(AZ_STATUS_LOOP) |
-                                AZ_STATUS_TOPIC(AZ_STATUS_POSITION));
+    publish(&b, AZ_STATUS_CHANGE, AZ_STATUS_TOPIC(AZ_STATUS_TRANSPORT) | AZ_STATUS_TOPIC(AZ_STATUS_LOOP) | AZ_STATUS_TOPIC(AZ_STATUS_POSITION));
     assert(plan.state == AN_ST_WAIT && plan.looping);
     expect_ms(plan.out_wall_ms, fixture_ms + 20000, 1000);
     fixture_ms += 16000;
@@ -364,6 +510,8 @@ int main(void)
     b.load.state = AZ_STATUS_LOAD_EMPTY;
     publish(&b, AZ_STATUS_CHANGE, AZ_STATUS_TOPIC(AZ_STATUS_LOAD));
     assert(!decks[1].loaded && !b_targets[1].valid && !strip_shown);
+
+    missing_data_and_fallbacks();
 
     puts("Deck events passed: load epochs, prepared loops, EXIT timing, borrowed maps, cue edits and resync");
 }

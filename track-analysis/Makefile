@@ -47,6 +47,11 @@ $(OUT)/fixtures.c: tests/generate_fixtures.py $(wildcard tests/fixtures/*.json)
 	$(PYTHON) $< $@
 $(OUT)/test_phrases: $(OUT)/fixtures.c $(ENGINE_OBJ)
 	$(CC) $(CPPFLAGS) $(CFLAGS) -O0 $(LDFLAGS) $^ $(LDLIBS) -o $@
+PHRASE_EDGE_PARTS := boundaries classifier fills rhythm features decorators high_boundaries
+PHRASE_EDGE_TESTS := $(addprefix tests/test_phrase_edges_,$(addsuffix .c,$(PHRASE_EDGE_PARTS)))
+PHRASE_EDGE_OBJECTS := $(addprefix $(OUT)/analysis/phrase_,$(addsuffix .o,$(PHRASE_EDGE_PARTS)))
+$(OUT)/test_phrase_edges: tests/test_phrase_edges.c $(PHRASE_EDGE_TESTS) $(ENGINE_OBJ)
+	$(CC) $(CPPFLAGS) $(CFLAGS) $(LDFLAGS) tests/test_phrase_edges.c $(PHRASE_EDGE_TESTS) $(filter-out $(PHRASE_EDGE_OBJECTS),$(ENGINE_OBJ)) $(LDLIBS) -o $@
 $(OUT)/test_runtime: tests/test_runtime.c track-analysis.c analysis/analysis.h $(AZ_SDK_INCLUDE)/azmod-mod.h
 	@mkdir -p $(@D)
 	$(CC) $(CPPFLAGS) $(CFLAGS) $(LDFLAGS) $< $(LDLIBS) -o $@
@@ -64,7 +69,8 @@ $(OUT)/analysis_probe: tests/analysis_probe.c $(ENGINE_OBJ)
 	$(CC) $(CPPFLAGS) $(CFLAGS) $(LDFLAGS) $^ $(LDLIBS) -o $@
 $(OUT)/test_activation_math: tests/test_activation_math.c tests/fixtures/musl-activation-bits.inc $(filter $(OUT)/vendor/musl-math/%,$(ENGINE_OBJ))
 	$(CC) $(CPPFLAGS) $(CFLAGS) $(LDFLAGS) $< $(filter %.o,$^) $(LDLIBS) -o $@
-test: $(OUT)/test_phrases $(OUT)/test_runtime $(OUT)/test_execution $(OUT)/test_vocal_kernels $(OUT)/test_vocal_frontend $(OUT)/test_analysis $(OUT)/test_parallel_analysis $(OUT)/test_activation_math
+test: $(OUT)/test_phrase_edges $(OUT)/test_phrases $(OUT)/test_runtime $(OUT)/test_execution $(OUT)/test_vocal_kernels $(OUT)/test_vocal_frontend $(OUT)/test_analysis $(OUT)/test_parallel_analysis $(OUT)/test_activation_math
+	$(OUT)/test_phrase_edges
 	$(OUT)/test_phrases
 	$(OUT)/test_runtime
 	$(OUT)/test_execution

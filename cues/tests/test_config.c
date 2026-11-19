@@ -55,8 +55,9 @@ int main(void)
     rejected("{\"config\":{\"maxMemoryCues\":16},\"groups\":[]}");
     rejected("{\"config\":{\"minBpm\":200,\"maxBpm\":70},\"groups\":[]}");
     rejected("{\"config\":{\"silenceThreshold\":0.02},\"groups\":[]}");
-    rejected("{\"config\":{},\"groups\":[{\"name\":\"x\",\"rules\":[{\"data\":{\"type\":\"hot\","
-             "\"anchor\":{\"type\":\"stem\",\"stems\":[]}}}]}]}");
+    rejected(
+        "{\"config\":{},\"groups\":[{\"name\":\"x\",\"rules\":[{\"data\":{\"type\":\"hot\","
+        "\"anchor\":{\"type\":\"stem\",\"stems\":[]}}}]}]}");
     rejected(
         "{\"config\":{},\"groups\":[{\"name\":\"x\",\"rules\":[{\"data\":{\"type\":\"hot\","
         "\"anchor\":{\"type\":\"phrase\",\"phrases\":[{\"type\":\"Intro\",\"stems\":[]}]}}}]}]}");
@@ -68,6 +69,23 @@ int main(void)
     const char *unicode = "{\"config\":{},\"groups\":[{\"name\":\"\\ud83c\\udfb5 café\"}]}";
     assert(cues_config_parse(&parsed, unicode, strlen(unicode), error, sizeof error));
     assert(!strcmp(parsed.groups[0].name, "🎵 café"));
+    const char *exponents = "{\"config\":{\"minBpm\":1e2,\"maxBpm\":4E+2,\"minDistance\":1e-2},\"groups\":[]}";
+    assert(cues_config_parse(&parsed, exponents, strlen(exponents), error, sizeof error));
+    assert(parsed.min_bpm == 100 && parsed.max_bpm == 400);
+    const char *scalar_boundaries = "{\"config\":{},\"groups\":[{\"name\":\"\\u007f\\u0080\\u07ff\\u0800\\uffff\"}]}";
+    assert(cues_config_parse(&parsed, scalar_boundaries, strlen(scalar_boundaries), error, sizeof error));
+    assert(!strcmp(parsed.groups[0].name, "\x7f\xc2\x80\xdf\xbf\xe0\xa0\x80\xef\xbf\xbf"));
+    rejected("{\"config\":{\"minBpm\":-},\"groups\":[]}");
+    rejected("{\"config\":{\"minBpm\":1.},\"groups\":[]}");
+    rejected("{\"config\":{\"minBpm\":1e},\"groups\":[]}");
+    rejected("{\"config\":{\"minBpm\":1e+},\"groups\":[]}");
+    rejected("{\"config\":{\"minBpm\":1e999},\"groups\":[]}");
+    rejected("{\"config\":{},\"groups\":[{\"name\":\"\\udc00\"}]}");
+    rejected("{\"config\":{},\"groups\":[{\"name\":\"\\ud800\\u0041\"}]}");
+    rejected("{\"config\":{},\"groups\":[{\"name\":\"\xc0\x80\"}]}");
+    rejected("{\"config\":{},\"groups\":[{\"name\":\"\xe0\x80\x80\"}]}");
+    rejected("{\"config\":{},\"groups\":[{\"name\":\"\xf4\x90\x80\x80\"}]}");
+    rejected("{\"config\":{},\"groups\":[{\"name\":\"\xe2\x82\"}]}");
     const char *source =
         "{\"config\":{\"maxMemoryCues\":10,\"hotCuePads\":8,\"cuePreference\":\"Hot "
         "Cue\",\"quantization\":\"Beat\",\"measuresIn\":\"Bars\"},\"groups\":[{\"name\":\"Mix\","
@@ -89,12 +107,15 @@ int main(void)
     cues_config round_trip = parsed;
     assert(cues_config_parse(&parsed, json, (size_t)n, error, sizeof error));
     assert(!memcmp(&parsed, &round_trip, sizeof parsed));
-    rejected("{\"config\":{},\"groups\":[{\"rules\":[{\"data\":{\"type\":\"hot\",\"pad\":\"*\","
-             "\"anchor\":{\"type\":\"absolute\",\"absolute\":{\"value\":0,\"unit\":\"seconds\"}}}}]}]}");
-    rejected("{\"config\":{},\"groups\":[{\"rules\":[{\"data\":{\"type\":\"hot\",\"pad\":\"*\","
-             "\"anchor\":{\"type\":\"phrase\",\"phrases\":[{\"type\":\"Intro\",\"index\":\"1\"}]}}}]}]}");
-    rejected("{\"config\":{},\"groups\":[{\"rules\":[{\"data\":{\"type\":\"memory\",\"pad\":\"*\","
-             "\"anchor\":{\"type\":\"phrase\",\"phrases\":[{\"type\":\"Intro\",\"index\":\"All\"}]}}}]}]}");
+    rejected(
+        "{\"config\":{},\"groups\":[{\"rules\":[{\"data\":{\"type\":\"hot\",\"pad\":\"*\","
+        "\"anchor\":{\"type\":\"absolute\",\"absolute\":{\"value\":0,\"unit\":\"seconds\"}}}}]}]}");
+    rejected(
+        "{\"config\":{},\"groups\":[{\"rules\":[{\"data\":{\"type\":\"hot\",\"pad\":\"*\","
+        "\"anchor\":{\"type\":\"phrase\",\"phrases\":[{\"type\":\"Intro\",\"index\":\"1\"}]}}}]}]}");
+    rejected(
+        "{\"config\":{},\"groups\":[{\"rules\":[{\"data\":{\"type\":\"memory\",\"pad\":\"*\","
+        "\"anchor\":{\"type\":\"phrase\",\"phrases\":[{\"type\":\"Intro\",\"index\":\"All\"}]}}}]}]}");
     /* Deterministic malformed-input sweep checks atomic rejection and token bounds. */
     for (unsigned i = 0; i < 1000; i++) {
         char garbage[128];
@@ -105,7 +126,8 @@ int main(void)
         if (!cues_config_parse(&parsed, garbage, len, error, sizeof error))
             assert(!memcmp(&parsed, &original, sizeof parsed));
     }
-    puts("Config passed: full bounded round trip, reference JSON, Unicode, validation, atomic "
-         "rejection and malformed input");
+    puts(
+        "Config passed: full bounded round trip, reference JSON, Unicode, validation, atomic "
+        "rejection and malformed input");
     return 0;
 }

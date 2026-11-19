@@ -15,10 +15,10 @@
 static const char *const SET_RULE_LABELS[4] = { "Phrase", "Hot cue", "16-bar grid", "32-bar grid" };
 static const char *const SET_DISPLAY_LABELS[3] = { "Ribbon", "Card", "Sidebar" };
 static const char *const SET_PHRASE_LABELS[8] = { "Any", "Intro", "Build", "Break",
-                                                "Chorus", "Outro", "Verse", "Bridge" };
+                                                  "Chorus", "Outro", "Verse", "Bridge" };
 static const char *const SET_POINT_LABELS[2] = { "Ending", "Start" };
 static const char *const SET_HOTCUE_LABELS[8] = { "HC1", "HC2", "HC3", "HC4",
-                                                "HC5", "HC6", "HC7", "HC8" };
+                                                  "HC5", "HC6", "HC7", "HC8" };
 static const char *const SET_DECK_LABELS[3] = { "Auto", "Deck 1", "Deck 2" };
 
 static const az_core_v1 *C;
@@ -46,8 +46,15 @@ static const set_desc DESC[SET_COUNT] = {
 };
 
 static const char *const KEYS[SET_COUNT] = {
-    "show", "display", "a-target", "a-phrase", "a-point", "a-consolidate",
-    "a-hotcue-any", "a-hotcue-slot", "b-deck",
+    "show",
+    "display",
+    "a-target",
+    "a-phrase",
+    "a-point",
+    "a-consolidate",
+    "a-hotcue-any",
+    "a-hotcue-slot",
+    "b-deck",
 };
 
 static const char *const ROW_LABELS[SET_COUNT] = {
@@ -83,9 +90,8 @@ int settings_get(int key)
     if (key < 0 || key >= SET_COUNT) return 0;
     return values[key];
 }
-void settings_set(int key, int value)
+static int setting_value(int key, int value)
 {
-    if (key < 0 || key >= SET_COUNT) return;
     int v = value;
     if (DESC[key].n > 0) {
         if (v < 0) v = DESC[key].n - 1;
@@ -93,6 +99,13 @@ void settings_set(int key, int value)
     } else {
         v = v ? 1 : 0;
     }
+    return v;
+}
+
+void settings_set(int key, int value)
+{
+    if (key < 0 || key >= SET_COUNT) return;
+    int v = setting_value(key, value);
     if (values[key] == v) return;
     values[key] = v;
     if (C && AZ_HAS(C, cfg_set)) C->cfg_set(ANCHOR_MOD_ID, KEYS[key], v);
@@ -151,8 +164,14 @@ static void line_fit(az_draw *d, int x, int y, int w, int h, const char *s, int 
 
 /* Quick controls uses the rectangle supplied by the core, not the panel dimensions.
  * A shorter/docked page keeps 44px targets and pages the settings instead of shrinking. */
-enum { HIT_SET, HIT_CYCLE, HIT_TAB, HIT_PAGE };
-typedef struct { az_rect r; int kind, key, value; } hit_t;
+enum { HIT_SET,
+       HIT_CYCLE,
+       HIT_TAB,
+       HIT_PAGE };
+typedef struct {
+    az_rect r;
+    int kind, key, value;
+} hit_t;
 static hit_t hits[64];
 static int nhits, g_sel = SET_SHOW, g_tab, g_first, g_visible, g_wide;
 static int focus_keys[SET_COUNT], nfocus;
@@ -174,7 +193,8 @@ static uint32_t accent(void) { return C->color(AZ_COL_HI); }
 
 static int tab_for(int key)
 {
-    return key <= SET_DISPLAY ? 0 : key <= SET_HCSLOT ? 1 : 2;
+    return key <= SET_DISPLAY ? 0 : key <= SET_HCSLOT ? 1
+                                                      : 2;
 }
 static void rebuild_focus(void)
 {
@@ -198,7 +218,7 @@ static void rebuild_focus(void)
 static void add_hit(int kind, int key, int value, az_rect r)
 {
     if (nhits >= (int)(sizeof hits / sizeof hits[0]) || r.w <= 0 || r.h <= 0) return;
-    hits[nhits++] = (hit_t){r, kind, key, value};
+    hits[nhits++] = (hit_t){ r, kind, key, value };
 }
 static void text(az_draw *d, az_rect r, const char *s, int px, uint32_t col)
 {
@@ -213,7 +233,7 @@ static void button(az_draw *d, az_rect r, const char *label, int key,
     char buf[160];
     fit(buf, sizeof buf, label, px, r.w - 12);
     int w = tw(buf, px);
-    text(d, (az_rect){r.x + (r.w - w) / 2, r.y, w, r.h}, buf, px,
+    text(d, (az_rect){ r.x + (r.w - w) / 2, r.y, w, r.h }, buf, px,
          selected ? C->color(AZ_COL_HI_TEXT) : ink());
     add_hit(kind, key, value, r);
 }
@@ -241,23 +261,23 @@ static void value_control(az_draw *d, az_rect r, int key, int px)
     }
     /* 44px arrows work with gloves or an imprecise tap. The value also cycles forward. */
     if (r.w >= 170) {
-        button(d, (az_rect){r.x, r.y, 44, r.h}, "<", key, HIT_CYCLE, -1, 0, px);
-        button(d, (az_rect){r.x + 48, r.y, r.w - 96, r.h}, value_label(key),
+        button(d, (az_rect){ r.x, r.y, 44, r.h }, "<", key, HIT_CYCLE, -1, 0, px);
+        button(d, (az_rect){ r.x + 48, r.y, r.w - 96, r.h }, value_label(key),
                key, HIT_CYCLE, 1, 0, px);
-        button(d, (az_rect){r.x + r.w - 44, r.y, 44, r.h}, ">", key, HIT_CYCLE, 1, 0, px);
+        button(d, (az_rect){ r.x + r.w - 44, r.y, 44, r.h }, ">", key, HIT_CYCLE, 1, 0, px);
     } else button(d, r, value_label(key), key, HIT_CYCLE, 1, 0, px);
 }
 static void setting_row(az_draw *d, az_rect r, int key, int px)
 {
     int vw = r.w * 55 / 100;
     if (!DESC[key].n) vw = 76;
-    text(d, (az_rect){r.x, r.y, r.w - vw - 12, r.h}, label_for(key), px, ink());
-    value_control(d, (az_rect){r.x + r.w - vw, r.y, vw, r.h}, key, px);
+    text(d, (az_rect){ r.x, r.y, r.w - vw - 12, r.h }, label_for(key), px, ink());
+    value_control(d, (az_rect){ r.x + r.w - vw, r.y, vw, r.h }, key, px);
 }
 static void stacked_field(az_draw *d, az_rect r, int key)
 {
-    text(d, (az_rect){r.x, r.y, r.w, 22}, label_for(key), 12, dim());
-    value_control(d, (az_rect){r.x, r.y + 24, r.w, r.h - 24}, key, 16);
+    text(d, (az_rect){ r.x, r.y, r.w, 22 }, label_for(key), 12, dim());
+    value_control(d, (az_rect){ r.x, r.y + 24, r.w, r.h - 24 }, key, 16);
 }
 static void mini_placement(az_draw *d, az_rect r, int layout, uint32_t col)
 {
@@ -265,135 +285,159 @@ static void mini_placement(az_draw *d, az_rect r, int layout, uint32_t col)
     int side = layout == 2 ? r.w / 5 : 0;
     C->fill_rect(d, r.x + 5, r.y + 6, r.w - 10 - side, 2, dim());
     C->fill_rect(d, r.x + 5, r.y + r.h / 2, r.w - 10 - side, 2, dim());
-    az_rect guide = layout == 0 ? (az_rect){r.x + 5, r.y + r.h / 3, r.w - 10, 3} :
-                    layout == 1 ? (az_rect){r.x + 5, r.y + r.h - 8, r.w - 10, 4} :
-                    (az_rect){r.x + r.w - side - 3, r.y + 4, side, r.h - 8};
+    az_rect guide = layout == 0 ? (az_rect){ r.x + 5, r.y + r.h / 3, r.w - 10, 3 } : layout == 1 ? (az_rect){ r.x + 5, r.y + r.h - 8, r.w - 10, 4 }
+                                                                                                 : (az_rect){ r.x + r.w - side - 3, r.y + 4, side, r.h - 8 };
     C->fill_rect(d, guide.x, guide.y, guide.w, guide.h, col);
 }
 static void placements(az_draw *d, az_rect r)
 {
     int gap = 8, w = (r.w - 2 * gap) / 3;
     for (int i = 0; i < 3; i++) {
-        az_rect b = {r.x + i * (w + gap), r.y, w, r.h};
+        az_rect b = { r.x + i * (w + gap), r.y, w, r.h };
         int on = settings_get(SET_DISPLAY) == i;
         uint32_t col = on ? C->color(AZ_COL_HI_TEXT) : ink();
         C->fill_rect(d, b.x, b.y, b.w, b.h, on ? accent() : mix(bg(), ink(), 5));
         C->draw_rect(d, b.x, b.y, b.w, b.h, 1, on || g_sel == SET_DISPLAY ? accent() : dim());
-        mini_placement(d, (az_rect){b.x + 12, b.y + 8, b.w - 24, b.h - 36}, i, col);
-        text(d, (az_rect){b.x + 8, b.y + b.h - 25, b.w - 16, 24}, SET_DISPLAY_LABELS[i], 16, col);
+        mini_placement(d, (az_rect){ b.x + 12, b.y + 8, b.w - 24, b.h - 36 }, i, col);
+        text(d, (az_rect){ b.x + 8, b.y + b.h - 25, b.w - 16, 24 }, SET_DISPLAY_LABELS[i], 16, col);
         add_hit(HIT_SET, SET_DISPLAY, i, b);
     }
 }
+static void sample_waveform(az_draw *d, az_rect r, int layout, int side)
+{
+    int wavew = r.w - 24 - side;
+    for (int row = 0; row < 2; row++)
+        for (int i = 0; i < wavew / 7; i++) {
+            int h = 3 + ((i * 13 + row * 7) % 11);
+            C->fill_rect(d, r.x + 12 + i * 7, r.y + 25 + row * (layout == 0 ? 52 : 20) + (14 - h) / 2, 4, h,
+                         mix(bg(), ink(), row ? 35 : 55));
+        }
+}
+
 static void sample_preview(az_draw *d, az_rect r)
 {
     C->fill_rect(d, r.x, r.y, r.w, r.h, mix(bg(), ink(), 4));
     C->draw_rect(d, r.x, r.y, r.w, r.h, 1, mix(bg(), ink(), 22));
-    text(d, (az_rect){r.x + 10, r.y + 3, r.w - 20, 18}, "GUIDE PREVIEW / SAMPLE", 11, dim());
+    text(d, (az_rect){ r.x + 10, r.y + 3, r.w - 20, 18 }, "GUIDE PREVIEW / SAMPLE", 11, dim());
     int layout = settings_get(SET_DISPLAY), side = layout == 2 ? 110 : 0;
-    int wavew = r.w - 24 - side;
-    for (int row = 0; row < 2; row++) for (int i = 0; i < wavew / 7; i++) {
-        int h = 3 + ((i * 13 + row * 7) % 11);
-        C->fill_rect(d, r.x + 12 + i * 7, r.y + 25 + row * (layout == 0 ? 52 : 20) + (14 - h) / 2, 4, h,
-                     mix(bg(), ink(), row ? 35 : 55));
-    }
+    sample_waveform(d, r, layout, side);
     if (!settings_get(SET_SHOW)) {
-        text(d, (az_rect){r.x + 10, r.y + r.h - 28, r.w - 20, 24}, "Guide hidden", 14, dim());
+        text(d, (az_rect){ r.x + 10, r.y + r.h - 28, r.w - 20, 24 }, "Guide hidden", 14, dim());
         return;
     }
-    az_rect guide = layout == 0 ? (az_rect){r.x + 9, r.y + 47, r.w - 18, 25} :
-                    layout == 1 ? (az_rect){r.x + 9, r.y + r.h - 48, r.w - 18, 42} :
-                    (az_rect){r.x + r.w - 110, r.y + 25, 100, r.h - 31};
+    az_rect guide = layout == 0 ? (az_rect){ r.x + 9, r.y + 47, r.w - 18, 25 } : layout == 1 ? (az_rect){ r.x + 9, r.y + r.h - 48, r.w - 18, 42 }
+                                                                                             : (az_rect){ r.x + r.w - 110, r.y + 25, 100, r.h - 31 };
     C->fill_rect(d, guide.x, guide.y, guide.w, guide.h, mix(bg(), accent(), 18));
     char instruction[80];
     int deck = settings_get(SET_DECK) == 1 ? 1 : 2;
     snprintf(instruction, sizeof instruction, "PLAY DECK %d IN 4 BARS", deck);
     if (layout == 2) {
         snprintf(instruction, sizeof instruction, "DECK %d / PLAY", deck);
-        text(d, (az_rect){guide.x + 5, guide.y, guide.w - 10, 18}, instruction, 10, ink());
-        text(d, (az_rect){guide.x + 5, guide.y + 19, guide.w - 10, 39}, "4 BARS", 20, accent());
+        text(d, (az_rect){ guide.x + 5, guide.y, guide.w - 10, 18 }, instruction, 10, ink());
+        text(d, (az_rect){ guide.x + 5, guide.y + 19, guide.w - 10, 39 }, "4 BARS", 20, accent());
     } else {
-        text(d, (az_rect){guide.x + 8, guide.y, guide.w - 16, 24}, instruction, 16, ink());
-        if (layout == 1) text(d, (az_rect){guide.x + 8, guide.y + 24, guide.w - 16, 17},
+        text(d, (az_rect){ guide.x + 8, guide.y, guide.w - 16, 24 }, instruction, 16, ink());
+        if (layout == 1) text(d, (az_rect){ guide.x + 8, guide.y + 24, guide.w - 16, 17 },
                               "TARGET / PHRASE END", 11, dim());
     }
 }
 static void page_controls(az_draw *d, az_rect r)
 {
     int bw = 60;
-    button(d, (az_rect){r.x, r.y, bw, r.h}, "<", -1, HIT_PAGE, -1, 0, 16);
+    button(d, (az_rect){ r.x, r.y, bw, r.h }, "<", -1, HIT_PAGE, -1, 0, 16);
     char label[80];
-    snprintf(label, sizeof label, "%s / turn knob for more", g_tab == 0 ? "Guide" : g_tab == 1 ? "Targets" : "Incoming");
-    text(d, (az_rect){r.x + bw + 8, r.y, r.w - 2 * bw - 16, r.h}, label, 11, dim());
-    button(d, (az_rect){r.x + r.w - bw, r.y, bw, r.h}, ">", -1, HIT_PAGE, 1, 0, 16);
+    snprintf(label, sizeof label, "%s / turn knob for more", g_tab == 0 ? "Guide" : g_tab == 1 ? "Targets"
+                                                                                               : "Incoming");
+    text(d, (az_rect){ r.x + bw + 8, r.y, r.w - 2 * bw - 16, r.h }, label, 11, dim());
+    button(d, (az_rect){ r.x + r.w - bw, r.y, bw, r.h }, ">", -1, HIT_PAGE, 1, 0, 16);
 }
 static void draw_wide(az_draw *d, az_rect a)
 {
     int pad = 12, gap = 16;
-    az_rect body = {a.x + pad, a.y + pad, a.w - 2 * pad, a.h - 2 * pad};
+    az_rect body = { a.x + pad, a.y + pad, a.w - 2 * pad, a.h - 2 * pad };
     int previeww = body.w * 42 / 100;
     int heroh = a.h >= 520 ? 140 : 112;
-    sample_preview(d, (az_rect){body.x, body.y, previeww, heroh});
+    sample_preview(d, (az_rect){ body.x, body.y, previeww, heroh });
     int x = body.x + previeww + gap, w = body.w - previeww - gap;
-    setting_row(d, (az_rect){x, body.y, w, 44}, SET_SHOW, 17);
-    placements(d, (az_rect){x, body.y + 48, w, heroh - 48});
+    setting_row(d, (az_rect){ x, body.y, w, 44 }, SET_SHOW, 17);
+    placements(d, (az_rect){ x, body.y + 48, w, heroh - 48 });
     int y = body.y + heroh + 12;
     int colw = (body.w - gap) / 2;
     int panelh = body.h - heroh - 12 - 52;
     int rowh = (panelh - 50) / 3;
     if (rowh > 64) rowh = 64;
-    text(d, (az_rect){body.x, y, colw, 26}, "OUTGOING TARGET", 15, ink());
-    text(d, (az_rect){body.x + colw + gap, y, colw, 26}, "INCOMING DECK", 15, ink());
+    text(d, (az_rect){ body.x, y, colw, 26 }, "OUTGOING TARGET", 15, ink());
+    text(d, (az_rect){ body.x + colw + gap, y, colw, 26 }, "INCOMING DECK", 15, ink());
     y += 28;
-    setting_row(d, (az_rect){body.x, y, colw, rowh}, SET_RULE, 16);
+    setting_row(d, (az_rect){ body.x, y, colw, rowh }, SET_RULE, 16);
     if (settings_get(SET_RULE) == 0) {
         int fw = (colw - 12) / 2;
-        stacked_field(d, (az_rect){body.x, y + rowh + 4, fw, rowh + 24}, SET_PHRASE);
-        stacked_field(d, (az_rect){body.x + fw + 12, y + rowh + 4, fw, rowh + 24}, SET_POINT);
-        setting_row(d, (az_rect){body.x, y + 2 * rowh + 32, colw, rowh}, SET_CONSOL, 15);
+        stacked_field(d, (az_rect){ body.x, y + rowh + 4, fw, rowh + 24 }, SET_PHRASE);
+        stacked_field(d, (az_rect){ body.x + fw + 12, y + rowh + 4, fw, rowh + 24 }, SET_POINT);
+        setting_row(d, (az_rect){ body.x, y + 2 * rowh + 32, colw, rowh }, SET_CONSOL, 15);
     } else if (settings_get(SET_RULE) == 1) {
-        setting_row(d, (az_rect){body.x, y + rowh + 8, colw, rowh}, SET_HCANY, 16);
-        if (!settings_get(SET_HCANY)) setting_row(d, (az_rect){body.x, y + 2 * rowh + 16, colw, rowh}, SET_HCSLOT, 16);
-    } else text(d, (az_rect){body.x, y + rowh + 12, colw, 44},
+        setting_row(d, (az_rect){ body.x, y + rowh + 8, colw, rowh }, SET_HCANY, 16);
+        if (!settings_get(SET_HCANY)) setting_row(d, (az_rect){ body.x, y + 2 * rowh + 16, colw, rowh }, SET_HCSLOT, 16);
+    } else text(d, (az_rect){ body.x, y + rowh + 12, colw, 44 },
                 "Next grid boundary in the outgoing track.", 13, dim());
     x = body.x + colw + gap;
-    stacked_field(d, (az_rect){x, y, colw, rowh + 24}, SET_DECK);
-    text(d, (az_rect){x, y + rowh + 38, colw, 24}, "LOOP / AUTOMATIC", 14, ink());
-    text(d, (az_rect){x, y + rowh + 64, colw, 22}, "Anchor follows B's working loop, including while paused.", 12, dim());
-    text(d, (az_rect){body.x, body.y + body.h - 44, body.w, 44},
+    stacked_field(d, (az_rect){ x, y, colw, rowh + 24 }, SET_DECK);
+    text(d, (az_rect){ x, y + rowh + 38, colw, 24 }, "LOOP / AUTOMATIC", 14, ink());
+    text(d, (az_rect){ x, y + rowh + 64, colw, 22 }, "Anchor follows B's working loop, including while paused.", 12, dim());
+    text(d, (az_rect){ body.x, body.y + body.h - 44, body.w, 44 },
          "Saved automatically. Use physical PLAY / loop EXIT.", 13, dim());
 }
+static int tab_keys(int group[SET_COUNT])
+{
+    int n = 0;
+    for (int i = 0; i < nfocus; i++)
+        if (tab_for(focus_keys[i]) == g_tab) group[n++] = focus_keys[i];
+    return n;
+}
+
+static int selected_key(const int *group, int n)
+{
+    int sel = 0;
+    for (int i = 0; i < n; i++)
+        if (group[i] == g_sel) sel = i;
+    return sel;
+}
+
+static void settings_viewport(int avail, int n, int sel)
+{
+    g_visible = avail / 52;
+    if (g_visible < 1) g_visible = 1;
+    if (g_visible > n) g_visible = n;
+    if (g_first > n - g_visible) g_first = n - g_visible;
+    if (g_first < 0) g_first = 0;
+    if (sel < g_first) g_first = sel;
+    if (sel >= g_first + g_visible) g_first = sel - g_visible + 1;
+}
+
 static void draw_compact(az_draw *d, az_rect a)
 {
     int pad = 8, gap = 6;
-    az_rect body = {a.x + pad, a.y + pad, a.w - 2 * pad, a.h - 2 * pad};
-    const char *tabs[] = {"Guide", "Targets", "Incoming"};
+    az_rect body = { a.x + pad, a.y + pad, a.w - 2 * pad, a.h - 2 * pad };
+    const char *tabs[] = { "Guide", "Targets", "Incoming" };
     int tabw = (body.w - 2 * gap) / 3;
-    for (int i = 0; i < 3; i++) button(d, (az_rect){body.x + i * (tabw + gap), body.y, tabw, 44},
-                                      tabs[i], -1, HIT_TAB, i, i == g_tab, 14);
+    for (int i = 0; i < 3; i++) button(d, (az_rect){ body.x + i * (tabw + gap), body.y, tabw, 44 },
+                                       tabs[i], -1, HIT_TAB, i, i == g_tab, 14);
     int y = body.y + 52, avail = body.h - 104;
-    int group[SET_COUNT], n = 0;
-    for (int i = 0; i < nfocus; i++) if (tab_for(focus_keys[i]) == g_tab) group[n++] = focus_keys[i];
-    int sel = 0;
-    for (int i = 0; i < n; i++) if (group[i] == g_sel) sel = i;
+    int group[SET_COUNT], n = tab_keys(group);
+    int sel = selected_key(group, n);
     /* The guide tab earns its space with visual placement buttons. */
     if (g_tab == 0 && avail >= 124) {
-        setting_row(d, (az_rect){body.x, y, body.w, 44}, SET_SHOW, 15);
-        placements(d, (az_rect){body.x, y + 50, body.w, 74});
-        if (avail >= 244) sample_preview(d, (az_rect){body.x, y + 134, body.w, 110});
+        setting_row(d, (az_rect){ body.x, y, body.w, 44 }, SET_SHOW, 15);
+        placements(d, (az_rect){ body.x, y + 50, body.w, 74 });
+        if (avail >= 244) sample_preview(d, (az_rect){ body.x, y + 134, body.w, 110 });
         g_visible = n;
         g_first = 0;
     } else {
-        g_visible = avail / 52;
-        if (g_visible < 1) g_visible = 1;
-        if (g_visible > n) g_visible = n;
-        if (g_first > n - g_visible) g_first = n - g_visible;
-        if (g_first < 0) g_first = 0;
-        if (sel < g_first) g_first = sel;
-        if (sel >= g_first + g_visible) g_first = sel - g_visible + 1;
+        settings_viewport(avail, n, sel);
         for (int i = 0; i < g_visible; i++)
-            setting_row(d, (az_rect){body.x, y + i * 52, body.w, 44}, group[g_first + i], 14);
+            setting_row(d, (az_rect){ body.x, y + i * 52, body.w, 44 }, group[g_first + i], 14);
     }
-    page_controls(d, (az_rect){body.x, body.y + body.h - 44, body.w, 44});
+    page_controls(d, (az_rect){ body.x, body.y + body.h - 44, body.w, 44 });
 }
 static void draw_cb(az_draw *d, az_rect a, void *user)
 {
@@ -405,7 +449,10 @@ static void draw_cb(az_draw *d, az_rect a, void *user)
     C->fill_rect(d, a.x, a.y, a.w, a.h, bg());
     g_wide = a.w >= 900 && a.h >= 420;
     if (g_wide) draw_wide(d, a);
-    else { g_tab = tab_for(g_sel); draw_compact(d, a); }
+    else {
+        g_tab = tab_for(g_sel);
+        draw_compact(d, a);
+    }
 }
 static void change(int key, int delta)
 {
@@ -426,43 +473,68 @@ static void move_page(int dir)
 {
     int group[SET_COUNT], n = 0;
     rebuild_focus();
-    for (int i = 0; i < nfocus; i++) if (tab_for(focus_keys[i]) == g_tab) group[n++] = focus_keys[i];
+    for (int i = 0; i < nfocus; i++)
+        if (tab_for(focus_keys[i]) == g_tab) group[n++] = focus_keys[i];
     int first = g_first + (dir < 0 ? -g_visible : g_visible);
-    if (first >= 0 && first < n) { g_first = first; g_sel = group[first]; }
-    else {
+    if (first >= 0 && first < n) {
+        g_first = first;
+        g_sel = group[first];
+    } else {
         g_tab = (g_tab + (dir < 0 ? 2 : 1)) % 3;
-        g_sel = g_tab == 0 ? SET_SHOW : g_tab == 1 ? SET_RULE : SET_DECK;
+        g_sel = g_tab == 0 ? SET_SHOW : g_tab == 1 ? SET_RULE
+                                                   : SET_DECK;
         g_first = 0;
     }
 }
+static void apply_setting_hit(hit_t hit)
+{
+    if (hit.kind == HIT_TAB) {
+        g_tab = hit.value;
+        g_sel = g_tab == 0 ? SET_SHOW : g_tab == 1 ? SET_RULE
+                                                   : SET_DECK;
+        g_first = 0;
+    } else if (hit.kind == HIT_PAGE) {
+        move_page(hit.value);
+    } else {
+        g_sel = hit.key;
+        if (hit.kind == HIT_SET) settings_set(hit.key, hit.value);
+        else change(hit.key, hit.value);
+    }
+}
+
+static int hit_contains(az_rect r, const az_event *ev)
+{
+    return ev->x >= r.x && ev->y >= r.y && ev->x < r.x + r.w && ev->y < r.y + r.h;
+}
+
+static int tap_setting(const az_event *ev)
+{
+    int found = 0;
+    for (int i = 0; i < nhits; i++) {
+        hit_t hit = hits[i];
+        if (!hit_contains(hit.r, ev)) continue;
+        found = 1;
+        apply_setting_hit(hit);
+        break;
+    }
+    return found;
+}
+
+static int settings_input_ready(const az_event *ev)
+{
+    return ev && C && ev->kind != AZ_EV_BACK && g_area.w >= 240 && g_area.h >= 180;
+}
+
 static int input_cb(const az_event *ev, void *user)
 {
     (void)user;
-    if (!ev || !C || ev->kind == AZ_EV_BACK) return 0;
-    if (g_area.w < 240 || g_area.h < 180) return 0;
+    if (!settings_input_ready(ev)) return 0;
     if (ev->kind == AZ_EV_KNOB) move_focus(ev->dir);
-    else if (ev->kind == AZ_EV_CLICK) { rebuild_focus(); change(g_sel, 1); }
-    else if (ev->kind == AZ_EV_TAP) {
-        int found = 0;
-        for (int i = 0; i < nhits; i++) {
-            hit_t hit = hits[i];
-            az_rect r = hit.r;
-            if (ev->x < r.x || ev->y < r.y || ev->x >= r.x + r.w || ev->y >= r.y + r.h) continue;
-            found = 1;
-            if (hit.kind == HIT_TAB) {
-                g_tab = hit.value;
-                g_sel = g_tab == 0 ? SET_SHOW : g_tab == 1 ? SET_RULE : SET_DECK;
-                g_first = 0;
-            } else if (hit.kind == HIT_PAGE) {
-                move_page(hit.value);
-            } else {
-                g_sel = hit.key;
-                if (hit.kind == HIT_SET) settings_set(hit.key, hit.value);
-                else change(hit.key, hit.value);
-            }
-            break;
-        }
-        if (!found) return 0;
+    else if (ev->kind == AZ_EV_CLICK) {
+        rebuild_focus();
+        change(g_sel, 1);
+    } else if (ev->kind == AZ_EV_TAP) {
+        if (!tap_setting(ev)) return 0;
     } else return 0;
     /* Do not let queued taps use regions from a different target type/page. */
     nhits = 0;
@@ -473,8 +545,9 @@ static int input_cb(const az_event *ev, void *user)
 static void enter_cb(void *user)
 {
     (void)user;
-    g_sel = SET_SHOW; g_tab = g_first = nhits = 0;
-    g_area = (az_rect){0};
+    g_sel = SET_SHOW;
+    g_tab = g_first = nhits = 0;
+    g_area = (az_rect){ 0 };
 }
 static const az_screen_v1 settings_screen = {
     .size = sizeof(az_screen_v1),
@@ -484,4 +557,3 @@ static const az_screen_v1 settings_screen = {
     .user = NULL,
     .flags = AZ_SCREEN_DEDICATED,
 };
-

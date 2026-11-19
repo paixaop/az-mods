@@ -66,6 +66,12 @@ static int rect_hit(const az_rect *r, const az_event *ev)
            ev->y >= r->y && ev->y < r->y + r->h;
 }
 
+static size_t utf8_prefix(const char *text, size_t length)
+{
+    while (length && ((unsigned char)text[length] & 0xc0) == 0x80) length--;
+    return length;
+}
+
 static void draw_fitted(az_draw *d, int x, int y, int width, const char *text,
                         int px, uint32_t rgb)
 {
@@ -79,14 +85,13 @@ static void draw_fitted(az_draw *d, int x, int y, int width, const char *text,
     if (C->text_width("...", px) > width) return;
     n = strlen(text);
     if (n > sizeof(clipped) - 4) n = sizeof(clipped) - 4;
-    while (n && ((unsigned char)text[n] & 0xc0) == 0x80) n--;
+    n = utf8_prefix(text, n);
     memcpy(clipped, text, n);
     for (;;) {
         memcpy(clipped + n, "...", 4);
         if (C->text_width(clipped, px) <= width) break;
         if (!n) return;
-        n--;
-        while (n && ((unsigned char)clipped[n] & 0xc0) == 0x80) n--;
+        n = utf8_prefix(clipped, n - 1);
     }
     C->draw_text(d, x, y, clipped, px, rgb);
 }
@@ -107,6 +112,25 @@ static void draw_toggle(az_draw *d, az_rect area, int y, int row, int on,
     *out = (az_rect){ area.x, y, area.w, row };
 }
 
+static void draw_forget(az_draw *d, az_rect area, int y, int row, int px)
+{
+    /* Keep Forget available after a failed update, including a failed delete.
+     * The service decides which durable/in-memory values still need clearing. */
+    if (status_available && (login_status.have_credentials || login_status.save_pending ||
+                             login_status.storage_error)) {
+        int tw = C->text_width("Forget saved login", px);
+        int bw = tw + row;
+        int bh = row * 3 / 4;
+        int bx = area.x + row / 2;
+        if (tw > 0 && bw <= area.w - row && y + bh <= area.y + area.h) {
+            C->fill_rect(d, bx, y, bw, bh, C->color(AZ_COL_HI));
+            C->draw_text(d, bx + row / 2, y + (bh - px * 3 / 2) / 2,
+                         "Forget saved login", px, C->color(AZ_COL_HI_TEXT));
+            g_forget_btn = (az_rect){ bx, y, bw, bh };
+        }
+    }
+}
+
 static void draw_page(az_draw *d, az_rect area, void *user)
 {
     const int row = C->row_height(d);
@@ -125,21 +149,7 @@ static void draw_page(az_draw *d, az_rect area, void *user)
     draw_toggle(d, area, y, row, options.remember, "Remember a login typed on the deck", &g_rem_row);
     y += row + row / 2;
 
-    /* Keep Forget available after a failed update, including a failed delete.
-     * The service decides which durable/in-memory values still need clearing. */
-    if (status_available && (login_status.have_credentials || login_status.save_pending ||
-                             login_status.storage_error)) {
-        int tw = C->text_width("Forget saved login", px);
-        int bw = tw + row;
-        int bh = row * 3 / 4;
-        int bx = area.x + row / 2;
-        if (tw > 0 && bw <= area.w - row && y + bh <= area.y + area.h) {
-            C->fill_rect(d, bx, y, bw, bh, C->color(AZ_COL_HI));
-            C->draw_text(d, bx + row / 2, y + (bh - px * 3 / 2) / 2,
-                         "Forget saved login", px, C->color(AZ_COL_HI_TEXT));
-            g_forget_btn = (az_rect){ bx, y, bw, bh };
-        }
-    }
+    draw_forget(d, area, y, row, px);
 }
 
 static int change_option(const char *key, int automatic)
@@ -188,37 +198,54 @@ static void page_enter(void *user)
 }
 
 static const az_screen_v1 PAGE = {
-    .size = sizeof(az_screen_v1), .on_draw = draw_page, .on_input = page_input, .on_enter = page_enter,
+    .size = sizeof(az_screen_v1),
+    .on_draw = draw_page,
+    .on_input = page_input,
+    .on_enter = page_enter,
 };
 
-static int init(const az_core_v1 *core)
+static int login_contract_available(void)
 {
-    static const az_row_v1 row = {
-        .size = sizeof(az_row_v1), .key = "menu", .label = "Beatport Remember",
-        .kind = AZ_ROW_SCREEN, .help = "Saved Beatport login, auto login and forget", .screen = &PAGE
-    };
-    if (!core || core->abi != AZ_MOD_ABI) return 1;
-    C = core;
-    if (!AZ_HAS(C, beatport_login_service) || !AZ_HAS(C, register_row) || !AZ_HAS(C, register_screen)) {
-        C->log(MOD_ID, "Beatport Remember requires AZ-MODS 1.2.8 or newer");
-        return 2;
-    }
-    login_service = C->beatport_login_service(AZ_BEATPORT_LOGIN_ABI);
-    if (!login_service || login_service->abi != AZ_BEATPORT_LOGIN_ABI ||
-        login_service->size < offsetof(az_beatport_login_v1, forget) + sizeof(login_service->forget) ||
-        !login_service->configure || !login_service->status || !login_service->forget) {
-        C->log(MOD_ID, "Beatport login service is unavailable on this firmware");
-        return 3;
-    }
+    return login_service && login_service->abi == AZ_BEATPORT_LOGIN_ABI &&
+           login_service->size >= offsetof(az_beatport_login_v1, forget) + sizeof(login_service->forget) &&
+           login_service->configure && login_service->status && login_service->forget;
+}
+
+static void load_options(void)
+{
     options = (az_beatport_login_options){ .size = sizeof(options),
-        .auto_login = !!C->cfg_get(MOD_ID, "auto-login", 1),
-        .remember = !!C->cfg_get(MOD_ID, "remember", 1),
-        .delay_sec = C->cfg_get(MOD_ID, "delay-sec", DEFAULT_DELAY_SEC),
-        .max_attempts = C->cfg_get(MOD_ID, "attempts", DEFAULT_ATTEMPTS) };
+                                           .auto_login = !!C->cfg_get(MOD_ID, "auto-login", 1),
+                                           .remember = !!C->cfg_get(MOD_ID, "remember", 1),
+                                           .delay_sec = C->cfg_get(MOD_ID, "delay-sec", DEFAULT_DELAY_SEC),
+                                           .max_attempts = C->cfg_get(MOD_ID, "attempts", DEFAULT_ATTEMPTS) };
     if (options.delay_sec < 0) options.delay_sec = 0;
     if (options.delay_sec > 600) options.delay_sec = 600;
     if (options.max_attempts < 1) options.max_attempts = 1;
     if (options.max_attempts > 4) options.max_attempts = 4;
+}
+
+static int core_features_ready(void)
+{
+    return AZ_HAS(C, beatport_login_service) && AZ_HAS(C, register_row) && AZ_HAS(C, register_screen);
+}
+
+static int init(const az_core_v1 *core)
+{
+    static const az_row_v1 row = {
+        .size = sizeof(az_row_v1), .key = "menu", .label = "Beatport Remember", .kind = AZ_ROW_SCREEN, .help = "Saved Beatport login, auto login and forget", .screen = &PAGE
+    };
+    if (!core || core->abi != AZ_MOD_ABI) return 1;
+    C = core;
+    if (!core_features_ready()) {
+        C->log(MOD_ID, "Beatport Remember requires AZ-MODS 1.2.8 or newer");
+        return 2;
+    }
+    login_service = C->beatport_login_service(AZ_BEATPORT_LOGIN_ABI);
+    if (!login_contract_available()) {
+        C->log(MOD_ID, "Beatport login service is unavailable on this firmware");
+        return 3;
+    }
+    load_options();
     if (login_service->configure(MOD_ID, &options) != 0) {
         C->log(MOD_ID, "Beatport login service could not be configured");
         return 4;

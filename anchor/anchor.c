@@ -91,7 +91,7 @@ static void invalidate_deck(int d)
 
 static void notice(int state, int reason, int accent, const char *detail)
 {
-    plan = (an_plan_t){.valid = 1, .state = state, .notice = reason, .accent = accent};
+    plan = (an_plan_t){ .valid = 1, .state = state, .notice = reason, .accent = accent };
     snprintf(plan.line2, sizeof plan.line2, "%s", detail);
 }
 
@@ -105,108 +105,171 @@ static int rate_valid(double rate)
     return rate > .2 && rate < 5;
 }
 
-static int deck_for_plan(const an_deck_status_t *deck, uint64_t now, an_deck_t *out)
+static int derive_rate(int playing, double rate, double bpm, double native)
 {
-    if (!deck->position_valid) return 0;
-    int playing = deck->playback == AZ_PLAYBACK_PLAYING;
+    return (!playing || !rate_valid(rate)) && bpm_valid(bpm) && bpm_valid(native);
+}
+
+static int deck_tempo(const an_deck_status_t *deck, int playing, double *bpm_out, double *rate_out)
+{
     double native = an_grid_bpm_at(&deck->analysis, deck->pos_ms);
     if (!bpm_valid(native)) native = deck->original_bpm;
     double bpm = deck->bpm, rate = deck->rate;
-    if ((!playing || !rate_valid(rate)) && bpm_valid(bpm) && bpm_valid(native))
+    if (derive_rate(playing, rate, bpm, native))
         rate = bpm / native;
     if (!rate_valid(rate)) return 0;
     if (!bpm_valid(bpm)) bpm = native * rate;
     if (!bpm_valid(bpm)) return 0;
 
-    uint32_t pos = deck->pos_ms;
-    if (playing) {
+    *bpm_out = bpm;
+    *rate_out = rate;
+    return 1;
+}
+
+static int project_head(const an_deck_status_t *deck, uint64_t now, double rate, uint32_t *pos)
+{
         /* Bring independently delivered heads to a common monotonic time. A
          * stalled or reversed head cannot support a forward countdown. */
-        uint64_t observed = deck->head_ns / 1000000u;
-        if (deck->direction != AZ_STATUS_DIRECTION_FORWARD || !deck->head_ns ||
-            now < observed || now - observed > 150) return 0;
-        uint32_t advance = (uint32_t)llround(rate * (now - observed));
-        if (deck->loop.valid && pos + advance >= deck->loop.out_ms)
-            return 0; /* Wait for the SDK's wrap instead of projecting past OUT. */
-        pos += advance;
-    }
-    *out = (an_deck_t){.loaded = 1, .playing = playing, .pos_ms = pos, .bpm = bpm, .rate = rate,
-                       .sample_rate = deck->sample_rate};
+    uint64_t observed = deck->head_ns / 1000000u;
+    if (deck->direction != AZ_STATUS_DIRECTION_FORWARD || !deck->head_ns ||
+        now < observed || now - observed > 150) return 0;
+    uint32_t advance = (uint32_t)llround(rate * (now - observed));
+    if (deck->loop.valid && *pos + advance >= deck->loop.out_ms)
+        return 0; /* Wait for the SDK's wrap instead of projecting past OUT. */
+    *pos += advance;
     return 1;
+}
+
+static int deck_for_plan(const an_deck_status_t *deck, uint64_t now, an_deck_t *out)
+{
+    if (!deck->position_valid) return 0;
+    int playing = deck->playback == AZ_PLAYBACK_PLAYING;
+    double bpm, rate;
+    if (!deck_tempo(deck, playing, &bpm, &rate)) return 0;
+
+    uint32_t pos = deck->pos_ms;
+    if (playing) {
+        if (!project_head(deck, now, rate, &pos)) return 0;
+    }
+    *out = (an_deck_t){ .loaded = 1, .playing = playing, .pos_ms = pos, .bpm = bpm, .rate = rate, .sample_rate = deck->sample_rate };
+    return 1;
+}
+
+static int prepare_incoming_target(const an_deck_status_t *incoming, const an_analysis_t *ba, int b, uint32_t pos_ms)
+{
+    int cues_pending = an_availability_pending(incoming->hot_cues) ||
+                       an_availability_pending(incoming->memory_cues);
+    if (!b_targets[b].valid && !incoming->phrases_pending) {
+        an_analysis_t available = *ba;
+        if (cues_pending) available.ncues = 0;
+        b_targets[b].valid = an_find_drop(&available, pos_ms, &b_targets[b].target) == 0;
+    }
+
+    return cues_pending;
+}
+
+static int outgoing_rule(const an_deck_status_t *outgoing, uint32_t pos_ms, an_target_opts_t *use)
+{
+    if (latched_ms && (uint64_t)latched_ms <= (uint64_t)pos_ms + 150) latched_ms = 0;
+    if (!latched_ms && use->rule == AN_RULE_PHRASE && !outgoing->analysis.nphrases) {
+        if (outgoing->phrases_pending) {
+            notice(AN_ST_NO_ANALYSIS, AN_NOTICE_READING, 0, "Waiting for the outgoing phrase map");
+            return 0;
+        }
+        use->rule = AN_RULE_HOTCUE;
+    }
+
+    return 1;
+}
+
+static void outgoing_cue_notice(int availability, int rule)
+{
+    if (an_availability_pending(availability))
+        notice(AN_ST_NO_ANALYSIS, AN_NOTICE_READING, 0, "Waiting for outgoing Hot Cues");
+    else if (availability == AZ_AVAIL_EMPTY)
+        notice(AN_ST_NO_ANALYSIS, rule == AN_RULE_HOTCUE ? AN_NOTICE_NO_CUES : AN_NOTICE_ANALYSIS_A,
+               2, "Choose a phrase or grid target");
+    else
+        notice(AN_ST_NO_ANALYSIS, AN_NOTICE_CUES_UNAVAILABLE, 2, "Choose a phrase or grid target");
+}
+
+static int outgoing_target(const an_deck_status_t *outgoing, uint32_t pos_ms, const an_target_opts_t *opts, const an_target_opts_t *use, an_cand_t *target)
+{
+    if (latched_ms) {
+        *target = (an_cand_t){ .ms = latched_ms };
+        snprintf(target->label, sizeof target->label, "%s", latched_label);
+    } else if (use->rule == AN_RULE_HOTCUE && outgoing->hot_cues != AZ_AVAIL_READY) {
+        outgoing_cue_notice(outgoing->hot_cues, opts->rule);
+        return 0;
+    } else if (use->rule >= AN_RULE_GRID16 && !outgoing->analysis.nbeats) {
+        notice(AN_ST_NO_ANALYSIS, outgoing->grid_pending ? AN_NOTICE_READING : AN_NOTICE_ANALYSIS_A,
+               2, "Waiting for the outgoing beat grid");
+        return 0;
+    } else if (an_auto_target(&outgoing->analysis, pos_ms, use, target) != 0) {
+        notice(AN_ST_NONE, AN_NOTICE_NONE, 0, "Choose an outgoing target ahead of the playhead");
+        return 0;
+    }
+
+    return 1;
+}
+
+static int incoming_drop_ready(const an_deck_status_t *incoming, int b, int cues_pending)
+{
+    if (!b_targets[b].valid) {
+        int reason = AN_NOTICE_NO_DROP;
+        if (incoming->phrases_pending || cues_pending) reason = AN_NOTICE_READING;
+        else if (!incoming->analysis.nphrases && !incoming->analysis.ncues) reason = AN_NOTICE_ANALYSIS_B;
+        notice(AN_ST_NO_ANALYSIS, reason, 2, "Choose a phrase, Hot Cue or Set here on B");
+        return 0;
+    }
+    return 1;
+}
+
+static int incoming_loop_ready(const an_deck_status_t *incoming)
+{
+    if (incoming->loop_availability != AZ_AVAIL_READY) {
+        int pending = an_availability_pending(incoming->loop_availability);
+        notice(AN_ST_OFF, pending ? AN_NOTICE_LOOP_UNKNOWN : AN_NOTICE_LOOP_UNAVAILABLE,
+               pending ? 0 : 2, pending ? "Waiting for the working loop" : "Working loop state is unavailable");
+        return 0;
+    }
+
+    return 1;
+}
+
+static void check_tempo_match(double outgoing, double incoming)
+{
+    if (fabs(outgoing - incoming) > .15 &&
+        (plan.state == AN_ST_SINGLE || plan.state == AN_ST_START ||
+         plan.state == AN_ST_WAIT || plan.state == AN_ST_OPEN)) {
+        plan.tempo_mismatch = 1;
+        plan.accent = 2;
+    }
 }
 
 static void compute_plan(uint64_t now, int a, int b, const an_target_opts_t *opts)
 {
     const an_deck_status_t *outgoing = &decks[a], *incoming = &decks[b];
-    const an_analysis_t *aa = &outgoing->analysis, *ba = &incoming->analysis;
+    const an_analysis_t *ba = &incoming->analysis;
     an_deck_t A, B;
     if (!deck_for_plan(outgoing, now, &A) || !deck_for_plan(incoming, now, &B)) {
         notice(AN_ST_OFF, AN_NOTICE_DECK_STATE, 0, "Waiting for playhead and tempo");
         return;
     }
 
-    int cues_pending = an_availability_pending(incoming->hot_cues) ||
-                       an_availability_pending(incoming->memory_cues);
-    if (!b_targets[b].valid && !incoming->phrases_pending) {
-        an_analysis_t available = *ba;
-        if (cues_pending) available.ncues = 0;
-        b_targets[b].valid = an_find_drop(&available, B.pos_ms, &b_targets[b].target) == 0;
-    }
+    int cues_pending = prepare_incoming_target(incoming, ba, b, B.pos_ms);
 
     an_target_opts_t use = *opts;
-    if (latched_ms && (uint64_t)latched_ms <= (uint64_t)A.pos_ms + 150) latched_ms = 0;
-    if (!latched_ms && use.rule == AN_RULE_PHRASE && !aa->nphrases) {
-        if (outgoing->phrases_pending) {
-            notice(AN_ST_NO_ANALYSIS, AN_NOTICE_READING, 0, "Waiting for the outgoing phrase map");
-            return;
-        }
-        use.rule = AN_RULE_HOTCUE;
-    }
+    if (!outgoing_rule(outgoing, A.pos_ms, &use)) return;
 
     an_cand_t target;
-    if (latched_ms) {
-        target = (an_cand_t){.ms = latched_ms};
-        snprintf(target.label, sizeof target.label, "%s", latched_label);
-    } else if (use.rule == AN_RULE_HOTCUE && outgoing->hot_cues != AZ_AVAIL_READY) {
-        int availability = outgoing->hot_cues;
-        if (an_availability_pending(availability))
-            notice(AN_ST_NO_ANALYSIS, AN_NOTICE_READING, 0, "Waiting for outgoing Hot Cues");
-        else if (availability == AZ_AVAIL_EMPTY)
-            notice(AN_ST_NO_ANALYSIS, opts->rule == AN_RULE_HOTCUE ? AN_NOTICE_NO_CUES : AN_NOTICE_ANALYSIS_A,
-                   2, "Choose a phrase or grid target");
-        else
-            notice(AN_ST_NO_ANALYSIS, AN_NOTICE_CUES_UNAVAILABLE, 2, "Choose a phrase or grid target");
-        return;
-    } else if (use.rule >= AN_RULE_GRID16 && !aa->nbeats) {
-        notice(AN_ST_NO_ANALYSIS, outgoing->grid_pending ? AN_NOTICE_READING : AN_NOTICE_ANALYSIS_A,
-               2, "Waiting for the outgoing beat grid");
-        return;
-    } else if (an_auto_target(aa, A.pos_ms, &use, &target) != 0) {
-        notice(AN_ST_NONE, AN_NOTICE_NONE, 0, "Choose an outgoing target ahead of the playhead");
-        return;
-    }
+    if (!outgoing_target(outgoing, A.pos_ms, opts, &use, &target)) return;
 
-    if (!b_targets[b].valid) {
-        int reason = AN_NOTICE_NO_DROP;
-        if (incoming->phrases_pending || cues_pending) reason = AN_NOTICE_READING;
-        else if (!ba->nphrases && !ba->ncues) reason = AN_NOTICE_ANALYSIS_B;
-        notice(AN_ST_NO_ANALYSIS, reason, 2, "Choose a phrase, Hot Cue or Set here on B");
-        return;
-    }
-    if (incoming->loop_availability != AZ_AVAIL_READY) {
-        int pending = an_availability_pending(incoming->loop_availability);
-        notice(AN_ST_OFF, pending ? AN_NOTICE_LOOP_UNKNOWN : AN_NOTICE_LOOP_UNAVAILABLE,
-               pending ? 0 : 2, pending ? "Waiting for the working loop" : "Working loop state is unavailable");
-        return;
-    }
+    if (!incoming_drop_ready(incoming, b, cues_pending)) return;
+    if (!incoming_loop_ready(incoming)) return;
 
     an_plan_target(&A, &B, &incoming->loop, target.ms, target.label, &b_targets[b].target, now, &plan);
-    if (fabs(A.bpm - B.bpm) > .15 &&
-        (plan.state == AN_ST_SINGLE || plan.state == AN_ST_START ||
-         plan.state == AN_ST_WAIT || plan.state == AN_ST_OPEN)) {
-        plan.tempo_mismatch = 1;
-        plan.accent = 2;
-    }
+    check_tempo_match(A.bpm, B.bpm);
 }
 
 /* ------------------------------------------------------------------------------------------
@@ -285,68 +348,64 @@ static int candidate_selected(uint32_t ms)
     return order == AZ_TIME_EQUAL;
 }
 
-static void draw_selector_list(az_draw *d, az_rect a)
+static int selector_pages(void)
 {
-    /* Invalidate old hit rectangles before every layout, including tiny fallbacks. */
-    memset(chip_r, 0, sizeof chip_r);
-    memset(&arrow_l_r, 0, sizeof arrow_l_r);
-    memset(&arrow_r_r, 0, sizeof arrow_r_r);
-    memset(&close_r, 0, sizeof close_r);
-    layout_ok = 0;
-    C->fill_rect(d, a.x, a.y, a.w, a.h, C->color(AZ_COL_BG));
-    C->draw_rect(d, a.x, a.y, a.w, a.h, 1, C->color(AZ_COL_TEXT_DIM));
-    if (cur_layout == ANCHOR_LAYOUT_SIDEBAR && a.w >= 140 && a.h >= 260) {
-        sel_per = 4;
-        int pages = (sel_n + sel_per - 1) / sel_per;
-        if (pages < 1) pages = 1;
-        if (sel_page >= pages) sel_page = pages - 1;
-        if (sel_page < 0) sel_page = 0;
-        char hint[64];
-        snprintf(hint, sizeof hint, "%c: DECK %d  %d/%d", sel_b ? 'B' : 'A', sel_deck + 1, sel_page + 1, pages);
-        draw_fit(d, a.x + 8, a.y + 8, a.w - 16, hint, 11, C->color(AZ_COL_TEXT));
-        for (int i = 0; i < sel_per; i++) {
-            int idx = sel_page * sel_per + i;
-            if (idx >= sel_n) break;
-            az_rect r = {a.x + 8, a.y + 38 + i * 49, a.w - 16, 44};
-            chip_r[i] = r;
-            int selected = candidate_selected(sel_cand[idx].ms);
-            C->draw_rect(d, r.x, r.y, r.w, r.h, selected ? 2 : 1,
-                         C->color(selected ? AZ_COL_HI : AZ_COL_TEXT_DIM));
-            draw_fit(d, r.x + 5, r.y + 4, r.w - 10, sel_cand[idx].label, 11, C->color(AZ_COL_TEXT));
-            unsigned sec = sel_cand[idx].ms / 1000u;
-            snprintf(hint, sizeof hint, "%u:%02u", sec / 60u, sec % 60u);
-            draw_fit(d, r.x + 5, r.y + 23, r.w - 10, hint, 10, C->color(AZ_COL_TEXT_DIM));
-        }
-        if (!sel_n) draw_fit(d, a.x + 8, a.y + 80, a.w - 16,
-                             sel_pending ? "READING TARGETS" : "NO TARGETS", 12, C->color(AZ_COL_TEXT));
-        snprintf(hint, sizeof hint, "%d loop pass%s", plan.loops, plan.loops == 1 ? "" : "es");
-        draw_fit(d, a.x + 8, a.y + a.h - 62, a.w - 16, hint, 10, C->color(AZ_COL_TEXT_DIM));
-        int bw = (a.w - 24) / 3;
-        int by = a.y + a.h - 40;
-        arrow_l_r = (az_rect){a.x + 8, by, bw, 32};
-        arrow_r_r = (az_rect){a.x + 12 + bw, by, bw, 32};
-        close_r = (az_rect){a.x + 16 + 2 * bw, by, bw, 32};
-        draw_chip(d, arrow_l_r, "<", 0);
-        draw_chip(d, arrow_r_r, ">", 0);
-        draw_chip(d, close_r, "X", 0);
-        layout_ok = 1;
-        return;
-    }
-    if (a.w < 260 || a.h < (sel_b ? 20 : 42)) {
-        draw_fit(d, a.x + 8, a.y + (a.h - 12 * 3 / 2) / 2, a.w - 16, "TAP TARGET", 12,
-                 C->color(AZ_COL_TEXT_DIM));
-        layout_ok = 1;
-        return;
-    }
+    int pages = (sel_n + sel_per - 1) / sel_per;
+    if (pages < 1) pages = 1;
+    if (sel_page >= pages) sel_page = pages - 1;
+    if (sel_page < 0) sel_page = 0;
+    return pages;
+}
 
+static int sidebar_candidate(az_draw *d, az_rect a, int i)
+{
+    char hint[64];
+    int idx = sel_page * sel_per + i;
+    if (idx >= sel_n) return 0;
+    az_rect r = { a.x + 8, a.y + 38 + i * 49, a.w - 16, 44 };
+    chip_r[i] = r;
+    int selected = candidate_selected(sel_cand[idx].ms);
+    C->draw_rect(d, r.x, r.y, r.w, r.h, selected ? 2 : 1,
+                 C->color(selected ? AZ_COL_HI : AZ_COL_TEXT_DIM));
+    draw_fit(d, r.x + 5, r.y + 4, r.w - 10, sel_cand[idx].label, 11, C->color(AZ_COL_TEXT));
+    unsigned sec = sel_cand[idx].ms / 1000u;
+    snprintf(hint, sizeof hint, "%u:%02u", sec / 60u, sec % 60u);
+    draw_fit(d, r.x + 5, r.y + 23, r.w - 10, hint, 10, C->color(AZ_COL_TEXT_DIM));
+    return 1;
+}
+
+static void draw_sidebar_selector(az_draw *d, az_rect a)
+{
+    sel_per = 4;
+    int pages = selector_pages();
+    char hint[64];
+    snprintf(hint, sizeof hint, "%c: DECK %d  %d/%d", sel_b ? 'B' : 'A', sel_deck + 1, sel_page + 1, pages);
+    draw_fit(d, a.x + 8, a.y + 8, a.w - 16, hint, 11, C->color(AZ_COL_TEXT));
+    for (int i = 0; i < sel_per; i++)
+        if (!sidebar_candidate(d, a, i)) break;
+    if (!sel_n) draw_fit(d, a.x + 8, a.y + 80, a.w - 16,
+                         sel_pending ? "READING TARGETS" : "NO TARGETS", 12, C->color(AZ_COL_TEXT));
+    snprintf(hint, sizeof hint, "%d loop pass%s", plan.loops, plan.loops == 1 ? "" : "es");
+    draw_fit(d, a.x + 8, a.y + a.h - 62, a.w - 16, hint, 10, C->color(AZ_COL_TEXT_DIM));
+    int bw = (a.w - 24) / 3;
+    int by = a.y + a.h - 40;
+    arrow_l_r = (az_rect){ a.x + 8, by, bw, 32 };
+    arrow_r_r = (az_rect){ a.x + 12 + bw, by, bw, 32 };
+    close_r = (az_rect){ a.x + 16 + 2 * bw, by, bw, 32 };
+    draw_chip(d, arrow_l_r, "<", 0);
+    draw_chip(d, arrow_r_r, ">", 0);
+    draw_chip(d, close_r, "X", 0);
+    layout_ok = 1;
+}
+
+static az_rect selector_geometry(az_rect a)
+{
     int pad = 6;
-    int hint_px = 9;
     int hint_h = sel_b ? 0 : 12;
 
     int arrow_px = 16;
     int close_w = text_w("X", arrow_px) + 16;
     int arrow_w = text_w("<", arrow_px) + 14;
-    int gap = 4;
     int chips_x = a.x + pad + arrow_w;
     int chips_w = a.w - 2 * pad - close_w - 2 * arrow_w;
     int cy = a.y + hint_h + 2;
@@ -359,6 +418,11 @@ static void draw_selector_list(az_draw *d, az_rect a)
     arrow_r_r = (az_rect){ a.x + a.w - pad - close_w - arrow_w, cy, arrow_w - 2, ch };
     close_r = (az_rect){ a.x + a.w - pad - close_w, cy, close_w, ch };
 
+    return (az_rect){ chips_x, cy, chips_w, ch };
+}
+
+static int selector_page_size(int chips_w, int gap)
+{
     /* How many chips fit is measured, not fixed: a long label ("BRIDGE END · 12:34")
      * shrinks the page, so no chip text is ever drawn over its neighbour. */
     int widest = 30;
@@ -373,10 +437,12 @@ static void draw_selector_list(az_draw *d, az_rect a)
     if (per > 4) per = 4;
     if (per < 1) per = 1;
     sel_per = per;
-    int pages = (sel_n + per - 1) / per;
-    if (pages < 1) pages = 1;
-    if (sel_page >= pages) sel_page = pages - 1;
-    if (sel_page < 0) sel_page = 0;
+    return per;
+}
+
+static void selector_hint(az_draw *d, az_rect a, int pages)
+{
+    const int pad = 6, hint_px = 9;
     if (!sel_b) {
         char hint[96];
         if (a.w >= 620)
@@ -389,6 +455,12 @@ static void draw_selector_list(az_draw *d, az_rect a)
         draw_fit(d, a.x + pad, a.y + 1, a.w - 2 * pad, hint, hint_px,
                  C->color(AZ_COL_TEXT_DIM));
     }
+}
+
+static void selector_chips(az_draw *d, az_rect chips)
+{
+    int chips_x = chips.x, chips_w = chips.w, cy = chips.y, ch = chips.h;
+    int per = sel_per, gap = 4;
     int cw = (chips_w - (per - 1) * gap) / per;
     if (cw < 20) cw = 20;
 
@@ -405,6 +477,34 @@ static void draw_selector_list(az_draw *d, az_rect a)
             draw_chip(d, r, "", 0);
         }
     }
+}
+
+static void selector_detail(az_draw *d, az_rect a, az_rect chips)
+{
+    int chips_x = chips.x, chips_w = chips.w, cy = chips.y, ch = chips.h, pad = 6;
+    if (sel_n == 0)
+        draw_fit(d, chips_x, cy + (ch - 12 * 3 / 2) / 2, chips_w,
+                 sel_pending ? "READING TARGETS" : sel_b ? "NO MARKERS - USE SET HERE"
+                                                         : "NO TARGETS AHEAD - ANALYSE TRACK A",
+                 12, C->color(AZ_COL_TEXT_DIM));
+    if (a.h >= 90) {
+        char detail[128];
+        snprintf(detail, sizeof detail, "%s | %d loop pass%s", plan.line2, plan.loops,
+                 plan.loops == 1 ? "" : "es");
+        draw_fit(d, a.x + pad, a.y + a.h - 22, a.w - 2 * pad, detail, 11, C->color(AZ_COL_TEXT_DIM));
+    }
+}
+
+static void draw_compact_selector(az_draw *d, az_rect a)
+{
+    az_rect chips = selector_geometry(a);
+    int chips_w = chips.w, cy = chips.y, ch = chips.h;
+    const int gap = 4, arrow_px = 16;
+
+    selector_page_size(chips_w, gap);
+    int pages = selector_pages();
+    selector_hint(d, a, pages);
+    selector_chips(d, chips);
     C->draw_text(d, arrow_l_r.x + 4, cy + (ch - arrow_px * 3 / 2) / 2, "<", arrow_px,
                  C->color(AZ_COL_TEXT_DIM));
     C->draw_text(d, arrow_r_r.x + 4, cy + (ch - arrow_px * 3 / 2) / 2, ">", arrow_px,
@@ -412,34 +512,54 @@ static void draw_selector_list(az_draw *d, az_rect a)
     C->draw_text(d, close_r.x + 5, cy + (ch - arrow_px * 3 / 2) / 2, "X", arrow_px,
                  C->color(AZ_COL_TEXT_DIM));
 
-    if (sel_n == 0)
-        draw_fit(d, chips_x, cy + (ch - 12 * 3 / 2) / 2, chips_w,
-                 sel_pending ? "READING TARGETS" : sel_b ? "NO MARKERS - USE SET HERE" : "NO TARGETS AHEAD - ANALYSE TRACK A", 12, C->color(AZ_COL_TEXT_DIM));
-    if (a.h >= 90) {
-        char detail[128];
-        snprintf(detail, sizeof detail, "%s | %d loop pass%s", plan.line2, plan.loops,
-                 plan.loops == 1 ? "" : "es");
-        draw_fit(d, a.x + pad, a.y + a.h - 22, a.w - 2 * pad, detail, 11, C->color(AZ_COL_TEXT_DIM));
-    }
+    selector_detail(d, a, chips);
     layout_ok = 1;
+}
+
+static void draw_selector_list(az_draw *d, az_rect a)
+{
+    /* Invalidate old hit rectangles before every layout, including tiny fallbacks. */
+    memset(chip_r, 0, sizeof chip_r);
+    memset(&arrow_l_r, 0, sizeof arrow_l_r);
+    memset(&arrow_r_r, 0, sizeof arrow_r_r);
+    memset(&close_r, 0, sizeof close_r);
+    layout_ok = 0;
+    C->fill_rect(d, a.x, a.y, a.w, a.h, C->color(AZ_COL_BG));
+    C->draw_rect(d, a.x, a.y, a.w, a.h, 1, C->color(AZ_COL_TEXT_DIM));
+    if (cur_layout == ANCHOR_LAYOUT_SIDEBAR && a.w >= 140 && a.h >= 260) {
+        draw_sidebar_selector(d, a);
+        return;
+    }
+    if (a.w < 260 || a.h < (sel_b ? 20 : 42)) {
+        draw_fit(d, a.x + 8, a.y + (a.h - 12 * 3 / 2) / 2, a.w - 16, "TAP TARGET", 12,
+                 C->color(AZ_COL_TEXT_DIM));
+        layout_ok = 1;
+        return;
+    }
+
+    draw_compact_selector(d, a);
 }
 
 static void draw_selector(az_draw *d, az_rect a)
 {
     memset(kind_r, 0, sizeof kind_r);
     controls_ok = 0;
-    if (!sel_b || a.w < 140 || a.h < 50) { draw_selector_list(d, a); return; }
+    if (!sel_b || a.w < 140 || a.h < 50) {
+        draw_selector_list(d, a);
+        return;
+    }
     C->fill_rect(d, a.x, a.y, a.w, a.h, C->color(AZ_COL_BG));
     int width = cur_layout == ANCHOR_LAYOUT_SIDEBAR ? (a.w - 12) / 3 : 108;
     int height = a.h >= 100 ? 32 : 24;
-    const char *names[] = {"PHRASE", "HOT CUE", "SET HERE"};
+    const char *names[] = { "PHRASE", "HOT CUE", "SET HERE" };
     for (int i = 0; i < 3; i++) {
-        kind_r[i] = (az_rect){a.x + 4 + i * (width + 2), a.y + 2, width, height};
+        kind_r[i] = (az_rect){ a.x + 4 + i * (width + 2), a.y + 2, width, height };
         draw_chip(d, kind_r[i], names[i], i == sel_kind);
     }
     if (a.w > 420) draw_fit(d, a.x + 340, a.y + 4, a.w - 348,
-                           "B TARGET / DECK DESTINATION", 11, C->color(AZ_COL_TEXT_DIM));
-    a.y += height + 4; a.h -= height + 4;
+                            "B TARGET / DECK DESTINATION", 11, C->color(AZ_COL_TEXT_DIM));
+    a.y += height + 4;
+    a.h -= height + 4;
     draw_selector_list(d, a);
 }
 
@@ -526,7 +646,7 @@ static void set_b_target(const an_cand_t *target)
 static void set_b_here(void)
 {
     if (cur_b < 0 || !decks[cur_b].position_valid) return;
-    an_cand_t target = {.ms = decks[cur_b].pos_ms, .label = "MARKED POINT"};
+    an_cand_t target = { .ms = decks[cur_b].pos_ms, .label = "MARKED POINT" };
     set_b_target(&target);
 }
 
@@ -546,69 +666,108 @@ static void latch_candidate(int idx)
     update_guide(mono_ms());
 }
 
-static int input(const az_event *ev, void *user)
+static int selector_back(void)
 {
-    (void)user;
-    if (!C || !ev) return 0;
-    if (!settings_get(SET_SHOW)) return 0;
-    if (ev->kind == AZ_EV_BACK) {
-        if (sel_open) {
-            close_selector();
-            if (strip) C->surface_redraw(strip);
-            return 1;
-        }
-        return 0;
-    }
-    if (ev->kind != AZ_EV_TAP) return 0;
-    if (!sel_open) {
-        if (cur_a < 0 || cur_b < 0 || !plan.valid) return 1;
-        if (controls_ok && in_rect(&target_controls[1], ev->x, ev->y)) {
-            open_b_selector(0); return 1;
-        }
-        open_selector();
-        return 1;
-    }
-    int x = ev->x, y = ev->y;
-    if (!layout_ok) {
-        close_selector();
-        return 1;
-    }
-    if (sel_b) {
-        for (int i = 0; i < 3; i++) if (in_rect(&kind_r[i], x, y)) {
-            if (i == 2) set_b_here(); else open_b_selector(i);
-            return 1;
-        }
-    }
-    for (int i = 0; i < 4 && i < sel_per; i++) {
-        if (in_rect(&chip_r[i], x, y)) {
-            latch_candidate(sel_page * sel_per + i);
-            return 1;
-        }
-    }
-    if (in_rect(&arrow_l_r, x, y)) {
-        if (sel_page > 0) sel_page--;
-        if (strip) C->surface_redraw(strip);
-        return 1;
-    }
-    if (in_rect(&arrow_r_r, x, y)) {
-        int pages = (sel_n + sel_per - 1) / sel_per;
-        if (sel_page + 1 < pages) sel_page++;
-        if (strip) C->surface_redraw(strip);
-        return 1;
-    }
-    if (in_rect(&close_r, x, y)) {
-        close_selector();
-        if (strip) C->surface_redraw(strip);
-        return 1;
-    }
+    if (!sel_open) return 0;
     close_selector();
     if (strip) C->surface_redraw(strip);
     return 1;
 }
 
+static int selector_open_tap(const az_event *ev)
+{
+    if (cur_a < 0 || cur_b < 0 || !plan.valid) return 1;
+    if (controls_ok && in_rect(&target_controls[1], ev->x, ev->y)) open_b_selector(0);
+    else open_selector();
+    return 1;
+}
+
+static int selector_kind_tap(int x, int y)
+{
+    if (!sel_b) return 0;
+    for (int i = 0; i < 3; i++) {
+        if (!in_rect(&kind_r[i], x, y)) continue;
+        if (i == 2) set_b_here();
+        else open_b_selector(i);
+        return 1;
+    }
+    return 0;
+}
+
+static int selector_candidate_tap(int x, int y)
+{
+    for (int i = 0; i < 4 && i < sel_per; i++) {
+        if (!in_rect(&chip_r[i], x, y)) continue;
+        latch_candidate(sel_page * sel_per + i);
+        return 1;
+    }
+    return 0;
+}
+
+static void selector_navigation_tap(int x, int y)
+{
+    if (in_rect(&arrow_l_r, x, y)) {
+        if (sel_page > 0) sel_page--;
+    } else if (in_rect(&arrow_r_r, x, y)) {
+        int pages = (sel_n + sel_per - 1) / sel_per;
+        if (sel_page + 1 < pages) sel_page++;
+    } else close_selector();
+    if (strip) C->surface_redraw(strip);
+}
+
+static int selector_tap(const az_event *ev)
+{
+    if (!sel_open) return selector_open_tap(ev);
+    if (!layout_ok) {
+        close_selector();
+        return 1;
+    }
+    if (selector_kind_tap(ev->x, ev->y) || selector_candidate_tap(ev->x, ev->y)) return 1;
+    selector_navigation_tap(ev->x, ev->y);
+    return 1;
+}
+
+static int input(const az_event *ev, void *user)
+{
+    (void)user;
+    if (!C || !ev || !settings_get(SET_SHOW)) return 0;
+    if (ev->kind == AZ_EV_BACK) return selector_back();
+    if (ev->kind == AZ_EV_TAP) return selector_tap(ev);
+    return 0;
+}
+
 static int paused(const an_deck_status_t *deck)
 {
     return deck->playback == AZ_PLAYBACK_PAUSED || deck->playback == AZ_PLAYBACK_STOPPED;
+}
+
+static void choose_playing_decks(int *a, int *b)
+{
+    for (int d = 0; d < AN_DECKS; d++) {
+        const an_deck_status_t *other = &decks[1 - d];
+        if (decks[d].loop_engaged && !other->loop_engaged && other->loop_availability == AZ_AVAIL_READY) {
+            *b = d;
+            *a = 1 - d;
+            return;
+        }
+    }
+        /* Keep the roles after B starts or exits a loop on the same load. */
+    *a = cur_a;
+    *b = cur_b;
+}
+
+static int playback_known(const an_deck_status_t *deck)
+{
+    return deck->playback == AZ_PLAYBACK_PLAYING || paused(deck);
+}
+
+static void choose_requested_decks(int incoming, int *a, int *b)
+{
+    int outgoing = 2 - incoming;
+    if (decks[outgoing].playback == AZ_PLAYBACK_PLAYING) {
+        *a = outgoing;
+        *b = 1 - outgoing;
+    }
 }
 
 static void choose_decks(int incoming, int *a, int *b)
@@ -617,42 +776,19 @@ static void choose_decks(int incoming, int *a, int *b)
     if (!decks[0].loaded || !decks[1].loaded) return;
     int p0 = decks[0].playback == AZ_PLAYBACK_PLAYING;
     int p1 = decks[1].playback == AZ_PLAYBACK_PLAYING;
-    if ((!p0 && !paused(&decks[0])) || (!p1 && !paused(&decks[1]))) return;
+    if (!playback_known(&decks[0]) || !playback_known(&decks[1])) return;
     if (incoming) {
-        int outgoing = 2 - incoming;
-        if (decks[outgoing].playback == AZ_PLAYBACK_PLAYING) {
-            *a = outgoing;
-            *b = 1 - outgoing;
-        }
+        choose_requested_decks(incoming, a, b);
     } else if (p0 != p1) {
         *a = p0 ? 0 : 1;
         *b = 1 - *a;
-    } else if (p0 && p1) {
-        for (int d = 0; d < AN_DECKS; d++) {
-            const an_deck_status_t *other = &decks[1 - d];
-            if (decks[d].loop_engaged && !other->loop_engaged && other->loop_availability == AZ_AVAIL_READY) {
-                *b = d;
-                *a = 1 - d;
-                return;
-            }
-        }
-        /* Keep the roles after B starts or exits a loop on the same load. */
-        *a = cur_a;
-        *b = cur_b;
+    } else if (p0) {
+        choose_playing_decks(a, b);
     }
 }
 
-static void update_guide(uint64_t now)
+static int update_options(void)
 {
-    if (!strip) return;
-    int layout = selected_layout();
-    if (layout != cur_layout) {
-        cur_layout = layout;
-        close_selector();
-        C->surface_place(strip, an_display_rect(layout));
-        shown_display_valid = 0;
-    }
-
     int phrase = settings_get(SET_PHRASE);
     an_target_opts_t opts = {
         .rule = settings_get(SET_RULE),
@@ -672,15 +808,11 @@ static void update_guide(uint64_t now)
         for (int d = 0; d < AN_DECKS; d++) decks[d].loop.released = 0;
     }
 
-    int a, b;
-    choose_decks(incoming, &a, &b);
-    if (a != cur_a) latched_ms = 0;
-    if (a != cur_a || b != cur_b) close_selector();
-    cur_a = a;
-    cur_b = b;
+    return incoming;
+}
 
-    int show = settings_get(SET_SHOW);
-    int sidebar = layout == ANCHOR_LAYOUT_SIDEBAR;
+static void update_sidebar_tab(int sidebar, int show)
+{
     if (sidebar_tab && sidebar != tab_shown) {
         C->surface_show(sidebar_tab, sidebar);
         tab_shown = sidebar;
@@ -690,6 +822,13 @@ static void update_guide(uint64_t now)
         C->surface_place(sidebar_tab, an_sidebar_tab_rect(show));
         C->surface_redraw(sidebar_tab);
     }
+}
+
+static int update_visibility(int layout, int a)
+{
+    int show = settings_get(SET_SHOW);
+    int sidebar = layout == ANCHOR_LAYOUT_SIDEBAR;
+    update_sidebar_tab(sidebar, show);
 
     int visible = show && (sidebar || a >= 0);
     if (visible != strip_shown) {
@@ -699,9 +838,14 @@ static void update_guide(uint64_t now)
     }
     if (!visible) {
         close_selector();
-        return;
+        return 0;
     }
 
+    return 1;
+}
+
+static void refresh_plan(uint64_t now, int a, int b)
+{
     if (a >= 0) {
         compute_plan(now, a, b, &cur_opts);
         if (b_targets[b].valid) {
@@ -718,7 +862,10 @@ static void update_guide(uint64_t now)
     } else {
         notice(AN_ST_NONE, AN_NOTICE_NONE, 2, "Choose the incoming deck");
     }
+}
 
+static void redraw_plan(int a, int b)
+{
     an_display_t display;
     an_display_model(&plan, a, b, &display);
     if (!shown_display_valid || memcmp(&shown_display, &display, sizeof display) != 0 ||
@@ -728,6 +875,33 @@ static void update_guide(uint64_t now)
         shown_display = display;
         shown_display_valid = 1;
     }
+}
+
+static void update_guide(uint64_t now)
+{
+    if (!strip) return;
+    int layout = selected_layout();
+    if (layout != cur_layout) {
+        cur_layout = layout;
+        close_selector();
+        C->surface_place(strip, an_display_rect(layout));
+        shown_display_valid = 0;
+    }
+
+    int incoming = update_options();
+
+    int a, b;
+    choose_decks(incoming, &a, &b);
+    if (a != cur_a) latched_ms = 0;
+    if (a != cur_a || b != cur_b) close_selector();
+    cur_a = a;
+    cur_b = b;
+
+    if (!update_visibility(layout, a)) return;
+
+    refresh_plan(now, a, b);
+
+    redraw_plan(a, b);
 }
 
 static void settings_changed(void)
@@ -746,12 +920,41 @@ static void deck_changed(const az_deck_status_event_v1 *event, void *user)
     update_guide(mono_ms());
 }
 
+static int surface_services_ready(const az_core_v1 *core)
+{
+    return AZ_HAS(core, surface_create) && AZ_HAS(core, surface_place) && AZ_HAS(core, surface_show) && AZ_HAS(core, surface_redraw);
+}
+
+static int drawing_services_ready(const az_core_v1 *core)
+{
+    return AZ_HAS(core, draw_text) && AZ_HAS(core, fill_rect) && AZ_HAS(core, draw_rect) && AZ_HAS(core, draw_image) &&
+           AZ_HAS(core, text_width) && AZ_HAS(core, color);
+}
+
+static int core_services_ready(const az_core_v1 *core)
+{
+    return AZ_HAS(core, library_service) && surface_services_ready(core) && drawing_services_ready(core) && AZ_HAS(core, request_redraw);
+}
+
+static void register_settings(const az_screen_v1 *settings)
+{
+    if (AZ_HAS(C, register_screen)) C->register_screen(MOD_ID, settings);
+    if (AZ_HAS(C, register_row)) {
+        const az_row_v1 setup_row = {
+            .size = sizeof setup_row,
+            .key = "settings",
+            .label = ANCHOR_MOD_NAME " settings",
+            .kind = AZ_ROW_SCREEN,
+            .screen = settings,
+            .help = "How to use the guide, and every transition setting",
+        };
+        C->register_row(MOD_ID, &setup_row);
+    }
+}
+
 static int init(const az_core_v1 *core)
 {
-    if (!AZ_HAS(core, library_service) || !AZ_HAS(core, surface_create) ||
-        !AZ_HAS(core, surface_place) || !AZ_HAS(core, surface_show) || !AZ_HAS(core, surface_redraw) ||
-        !AZ_HAS(core, draw_text) || !AZ_HAS(core, fill_rect) || !AZ_HAS(core, draw_rect) || !AZ_HAS(core, draw_image) ||
-        !AZ_HAS(core, text_width) || !AZ_HAS(core, color) || !AZ_HAS(core, request_redraw)) return -1;
+    if (!core_services_ready(core)) return -1;
     const az_library_v1 *lib = core->library_service(AZ_LIBRARY_ABI);
     if (!AZ_LIB_HAS(lib, on_deck_status) || !AZ_LIB_HAS(lib, deck_status_release)) {
         if (AZ_HAS(core, log)) core->log(MOD_ID, "Deck status requires AZ-MODS " AZ_DECK_STATUS_MIN_CORE);
@@ -761,19 +964,28 @@ static int init(const az_core_v1 *core)
     C = core;
     const az_screen_v1 *settings = settings_init(C, settings_changed);
     static const az_surface_v1 guide = {
-        .size = sizeof guide, .layer = AZ_LAYER_OVER_EP147, .views = AZ_VIEW_TWO_DECKS,
-        .on_paint = paint, .on_input = input,
+        .size = sizeof guide,
+        .layer = AZ_LAYER_OVER_EP147,
+        .views = AZ_VIEW_TWO_DECKS,
+        .on_paint = paint,
+        .on_input = input,
     };
     static const az_surface_v1 tab = {
-        .size = sizeof tab, .layer = AZ_LAYER_OVER_EP147, .views = AZ_VIEW_TWO_DECKS,
-        .on_paint = tab_paint, .on_input = tab_input,
+        .size = sizeof tab,
+        .layer = AZ_LAYER_OVER_EP147,
+        .views = AZ_VIEW_TWO_DECKS,
+        .on_paint = tab_paint,
+        .on_input = tab_input,
     };
     strip = C->surface_create(MOD_ID, &guide);
     sidebar_tab = C->surface_create(MOD_ID, &tab);
     if (!strip || !sidebar_tab) return -1;
 
     static const az_deck_watch_v1 watch = {
-        .size = sizeof watch, .version = AZ_DATA_VERSION, .deck_mask = (1u << AN_DECKS) - 1, .position_hz = 30,
+        .size = sizeof watch,
+        .version = AZ_DATA_VERSION,
+        .deck_mask = (1u << AN_DECKS) - 1,
+        .position_hz = 30,
         .topics = AZ_STATUS_TOPIC(AZ_STATUS_LOAD) | AZ_STATUS_TOPIC(AZ_STATUS_TRANSPORT) |
                   AZ_STATUS_TOPIC(AZ_STATUS_POSITION) | AZ_STATUS_TOPIC(AZ_STATUS_TEMPO) |
                   AZ_STATUS_TOPIC(AZ_STATUS_LOOP) | AZ_STATUS_TOPIC(AZ_STATUS_GRID) |
@@ -785,21 +997,17 @@ static int init(const az_core_v1 *core)
         return rc;
     }
 
-    if (AZ_HAS(C, register_screen)) C->register_screen(MOD_ID, settings);
-    if (AZ_HAS(C, register_row)) {
-        const az_row_v1 setup_row = {
-            .size = sizeof setup_row, .key = "settings", .label = ANCHOR_MOD_NAME " settings",
-            .kind = AZ_ROW_SCREEN, .screen = settings,
-            .help = "How to use the guide, and every transition setting",
-        };
-        C->register_row(MOD_ID, &setup_row);
-    }
+    register_settings(settings);
     update_guide(mono_ms());
     return 0;
 }
 
 static const az_mod_v1 MOD = {
-    .abi = AZ_MOD_ABI, .size = sizeof MOD, .id = MOD_ID, .fw_tags = TAGS, .init = init,
+    .abi = AZ_MOD_ABI,
+    .size = sizeof MOD,
+    .id = MOD_ID,
+    .fw_tags = TAGS,
+    .init = init,
 };
 
 AZ_MOD_EXPORT const az_mod_v1 *az_mod_v1_entry(void)
