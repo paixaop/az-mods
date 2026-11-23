@@ -9,7 +9,8 @@
         "minDistance": 0,
         "cuePreference": "Hot Cue",
         "quantization": "Off",
-        "measuresIn": "Bars"
+        "measuresIn": "Bars",
+        "consolidatePhrases": true
     },
     "groups": [
         {
@@ -39,7 +40,7 @@
                                 "unit": "seconds"
                             }
                         },
-                        "color": "Red",
+                        "color": "By pad",
                         "name": "Track start",
                         "comment": ""
                     }
@@ -63,8 +64,8 @@
                             "value": 0,
                             "unit": "bars"
                         },
-                        "color": "Green",
-                        "name": "{phrase}",
+                        "color": "By pad",
+                        "name": "{phrase} ({length} bars)",
                         "comment": ""
                     }
                 },
@@ -87,7 +88,7 @@
                             "unit": "bars"
                         },
                         "color": "Yellow",
-                        "name": "{phrase} end -16 bars",
+                        "name": "{phrase} ({length} bars) end -16 bars",
                         "comment": ""
                     }
                 },
@@ -110,7 +111,7 @@
                             "unit": "bars"
                         },
                         "color": "Orange",
-                        "name": "{phrase} end -32 bars",
+                        "name": "{phrase} ({length} bars) end -32 bars",
                         "comment": ""
                     }
                 }

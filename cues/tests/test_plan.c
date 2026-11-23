@@ -1,5 +1,6 @@
 /* SPDX-License-Identifier: GPL-3.0-only */
 #include "cues.h"
+#include "azmod-phrases.h"
 #include "azmod-timestamps.h"
 #include <assert.h>
 #include <math.h>
@@ -112,16 +113,48 @@ static void absolute_and_metadata(void)
     track.grid_info.availability = AZ_AVAIL_UNSUPPORTED;
     track.beats = NULL;
     track.beat_count = 0;
+    track.phrases_info.availability = AZ_AVAIL_LOADING;
+    track.phrases = NULL;
+    track.phrase_count = 0;
     build();
     assert(plan.count == 1);
     at(plan.points[0].start_s, 3.25);
     config.quantization = CUES_QUANT_BEAT;
-    build();
-    assert(plan.count == 0 && plan.skipped == 1);
+    assert(cues_build_plan(&config, &track, &existing, rate, &plan) == AZ_PENDING);
+    assert(plan.count == 0);
     assert(cues_build_plan(&config, &track, &existing, 0, &plan) == AZ_INVALID);
     config.enabled = 1;
     track.metadata.valid &= ~AZ_META_DURATION;
     assert(cues_build_plan(&config, &track, &existing, rate, &plan) == AZ_PENDING);
+}
+static void pending_absolute_grid(void)
+{
+    setup();
+    rule(0, CUES_ABSOLUTE, AZ_CUE_HOT, CUES_SECONDS, 0);
+    cues_rule *r = rule(1, CUES_ABSOLUTE, AZ_CUE_MEMORY, CUES_BEATS, 4);
+    track.grid_info.availability = AZ_AVAIL_LOADING;
+    assert(cues_build_plan(&config, &track, &existing, rate, &plan) == AZ_PENDING);
+    assert(!plan.count); /* No partial track-start bank while beat four is unknown. */
+    r->unit = CUES_BARS;
+    assert(cues_build_plan(&config, &track, &existing, rate, &plan) == AZ_PENDING);
+    assert(!plan.count);
+    r->unit = CUES_SECONDS;
+    r->loop_mode = CUES_LOOP_FIXED;
+    r->loop_length = 2;
+    assert(cues_build_plan(&config, &track, &existing, rate, &plan) == AZ_PENDING);
+    assert(!plan.count); /* A seconds anchor with a beat-length loop still needs the grid. */
+    r->loop_unit = CUES_SECONDS;
+    build();
+    assert(plan.count == 2);
+    at(plan.points[1].end_s, 6);
+    config.groups[0].quantization = CUES_QUANT_BAR;
+    assert(cues_build_plan(&config, &track, &existing, rate, &plan) == AZ_PENDING);
+    assert(!plan.count);
+    track.grid_info.availability = AZ_AVAIL_READY;
+    build();
+    assert(plan.count == 2);
+    at(plan.points[1].start_s, 4);
+    at(plan.points[1].end_s, 6);
 }
 static void phrase_rules(void)
 {
@@ -167,9 +200,12 @@ static void phrase_rules(void)
     r->phrase_point = CUES_START;
     phrases[1].raw_mood = 0;
     phrases[1].raw_kind = 5; /* Anchor deliberately classifies this as chorus. */
-    r->phrase_type = 4;
+    r->phrase_type = AZ_PHRASE_CHORUS;
+    strcpy(r->comment, "{phrase}");
     build();
     assert(plan.count == 1); /* only the known-mood chorus */
+    assert(!strcmp(plan.points[0].comment, "2 Chorus: Chorus"));
+    r->comment[0] = 0;
     r->phrase_type = 0;
     phrases[1].raw_kind = 99;
     build();
@@ -268,11 +304,14 @@ static void automatic_hot_pads(void)
     rule(0, CUES_ABSOLUTE, AZ_CUE_HOT, CUES_SECONDS, 1)->pad = 1;
     cues_rule *r = rule(1, CUES_PHRASE, AZ_CUE_HOT, CUES_SECONDS, 0);
     r->phrase_type = 1;
+    r->color = CUES_COLOR_BY_PAD;
     r->pad = 8; /* Legacy All rules' fixed pads no longer restrict allocation. */
     add_existing(AZ_CUE_HOT, 2, 20);
     build();
     assert(plan.count == 3);
     assert(plan.points[0].slot == 1 && plan.points[1].slot == 3 && plan.points[2].slot == 4);
+    assert(plan.points[1].rgb == cues_colors[CUES_COLOR_AQUA]);
+    assert(plan.points[2].rgb == cues_colors[CUES_COLOR_BLUE]);
     at(plan.points[1].start_s, 0);
     at(plan.points[2].start_s, 4);
     config.hot_pads = 3;
@@ -304,12 +343,45 @@ static void automatic_hot_pads(void)
     track.phrase_count = 10;
     r = rule(0, CUES_PHRASE, AZ_CUE_HOT, CUES_SECONDS, 0);
     r->phrase_type = 4;
+    r->color = CUES_COLOR_BY_PAD;
     build();
     assert(plan.count == 8);
     for (int i = 0; i < 8; ++i) {
         assert(plan.points[i].slot == (unsigned)i + 1);
+        assert(plan.points[i].rgb != 0);
+        for (int j = 0; j < i; ++j) assert(plan.points[i].rgb != plan.points[j].rgb);
         at(plan.points[i].start_s, i * 2.);
     }
+}
+
+static void consolidated_occurrences(void)
+{
+    setup();
+    phrases[3] = (az_phrase){ .start_beat = 24, .end_beat = 32, .raw_mood = 1, .raw_kind = 1 };
+    phrases[4] = (az_phrase){ .start_beat = 36, .end_beat = 44, .raw_mood = 1, .raw_kind = 1 };
+    cues_rule *r = rule(0, CUES_PHRASE, AZ_CUE_HOT, CUES_SECONDS, 0);
+    r->phrase_type = 1;
+    r->phrase_point = CUES_MIDDLE;
+    strcpy(r->name, "{phrase} ({length} bars)");
+    build();
+    assert(plan.count == 4);
+    config.consolidate_phrases = 1;
+    build();
+    assert(plan.count == 3);
+    at(plan.points[0].start_s, 4); /* Midpoint of both initial Intro rows. */
+    assert(!strcmp(plan.points[0].comment, "Intro (4 bars)"));
+    at(plan.points[1].start_s, 14); /* The intervening Chorus breaks the run. */
+    at(plan.points[2].start_s, 20); /* The gap breaks the run. */
+    r->phrase_index = 2;
+    build();
+    assert(plan.count == 1 && plan.points[0].slot == 1);
+    at(plan.points[0].start_s, 14);
+    r->phrase_index = 0;
+    phrases[4].start_beat = 32;
+    phrases[4].end_beat = 65;
+    build();
+    assert(plan.count == 2 && plan.skipped == 1);
+    assert(!strcmp(plan.points[1].comment, "Intro (2 bars)"));
 }
 
 static void default_rules_file(void)
@@ -322,46 +394,55 @@ static void default_rules_file(void)
     assert(!ferror(file) && feof(file));
     assert(fclose(file) == 0);
     assert(cues_config_parse(&config, json, n, error, sizeof error));
-    assert(config.enabled && config.group_count == 1 && config.groups[0].rule_count == 4);
+    assert(config.enabled && config.consolidate_phrases);
+    assert(config.group_count == 1 && config.groups[0].rule_count == 4);
     assert(!config.groups[0].artist[0] && !config.groups[0].key[0]);
     /* Three-beat bars and a tempo change catch offsets that assume 4/4 or fixed BPM. */
     static az_beat grid[433];
-    static az_phrase choruses[2];
+    static az_phrase choruses[3];
     for (unsigned i = 0; i < 433; ++i)
         grid[i] = (az_beat){ .time_s = i < 200 ? .25 + i * .5 : 100.25 + (i - 200) * .75,
                              .beat_in_bar = i % 3 + 1,
                              .bpm = i < 200 ? 120 : 80 };
-    choruses[0] = (az_phrase){ .start_beat = 48, .end_beat = 192, .raw_mood = 1, .raw_kind = 5 };
-    choruses[1] = (az_phrase){ .start_beat = 240, .end_beat = 384, .raw_mood = 2, .raw_kind = 9 };
+    choruses[0] = (az_phrase){ .start_beat = 48, .end_beat = 96, .raw_mood = 1, .raw_kind = 5 };
+    choruses[1] = (az_phrase){ .start_beat = 96, .end_beat = 192, .raw_mood = 2, .raw_kind = 9 };
+    choruses[2] = (az_phrase){ .start_beat = 240, .end_beat = 384, .raw_mood = 2, .raw_kind = 9 };
     track.beats = grid;
     track.beat_count = 433;
     track.phrases = choruses;
-    track.phrase_count = 2;
+    track.phrase_count = 3;
     track.metadata.duration_s = 300;
     build();
     assert(plan.count == 7);
     assert(plan.points[0].slot == 1);
+    assert(plan.points[0].rgb == cues_colors[CUES_COLOR_RED]);
     at(plan.points[0].start_s, 0);
+    const uint32_t starts[] = { choruses[0].start_beat, choruses[2].start_beat };
+    const uint32_t ends[] = { choruses[1].end_beat, choruses[2].end_beat };
     for (unsigned i = 0; i < 2; ++i) {
         assert(plan.points[1 + i].classification == AZ_CUE_HOT && plan.points[1 + i].slot == i + 2);
-        at(plan.points[1 + i].start_s, grid[choruses[i].start_beat].time_s);
+        assert(plan.points[1 + i].rgb == cues_colors[CUES_COLOR_GREEN + i]);
+        assert(!strcmp(plan.points[1 + i].comment, "Chorus (48 bars)"));
+        at(plan.points[1 + i].start_s, grid[starts[i]].time_s);
         assert(plan.points[3 + i].classification == AZ_CUE_MEMORY);
-        at(plan.points[3 + i].start_s, grid[choruses[i].end_beat - 16 * 3].time_s);
+        assert(!strcmp(plan.points[3 + i].comment, "Chorus (48 bars) end -16 bars"));
+        at(plan.points[3 + i].start_s, grid[ends[i] - 16 * 3].time_s);
         assert(plan.points[5 + i].classification == AZ_CUE_MEMORY);
-        at(plan.points[5 + i].start_s, grid[choruses[i].end_beat - 32 * 3].time_s);
+        assert(!strcmp(plan.points[5 + i].comment, "Chorus (48 bars) end -32 bars"));
+        at(plan.points[5 + i].start_s, grid[ends[i] - 32 * 3].time_s);
     }
     /* Hot cues win when a 32-bar chorus puts its -32 memory point at its start. */
-    choruses[0].end_beat = choruses[0].start_beat + 32 * 3;
+    choruses[1].end_beat = choruses[0].start_beat + 32 * 3;
     build();
     assert(plan.count == 6 && plan.skipped == 1);
     at(plan.points[1].start_s, grid[choruses[0].start_beat].time_s);
-    at(plan.points[5].start_s, grid[choruses[1].end_beat - 32 * 3].time_s);
+    at(plan.points[5].start_s, grid[choruses[2].end_beat - 32 * 3].time_s);
     /* The same policy applies to -16 bars on a 16-bar chorus. */
-    choruses[1].end_beat = choruses[1].start_beat + 16 * 3;
+    choruses[2].end_beat = choruses[2].start_beat + 16 * 3;
     build();
     assert(plan.count == 5 && plan.skipped == 2);
-    at(plan.points[2].start_s, grid[choruses[1].start_beat].time_s);
-    at(plan.points[4].start_s, grid[choruses[1].end_beat - 32 * 3].time_s);
+    at(plan.points[2].start_s, grid[choruses[2].start_beat].time_s);
+    at(plan.points[4].start_s, grid[choruses[2].end_beat - 32 * 3].time_s);
 }
 static void quantization(void)
 {
@@ -392,7 +473,7 @@ static void quantization(void)
     beats[2].time_s = beats[1].time_s;
     config.quantization = CUES_QUANT_BEAT;
     config.groups[0].quantization = CUES_INHERIT;
-    build();
+    assert(cues_build_plan(&config, &track, &existing, rate, &plan) == AZ_PENDING);
     assert(plan.count == 0);
 }
 static void conflicts_and_limits(void)
@@ -517,10 +598,12 @@ static void maximum_analysis(void)
 int main(void)
 {
     absolute_and_metadata();
+    pending_absolute_grid();
     phrase_rules();
     pending_phrase_analysis();
     variable_grid_and_loops();
     automatic_hot_pads();
+    consolidated_occurrences();
     default_rules_file();
     quantization();
     conflicts_and_limits();

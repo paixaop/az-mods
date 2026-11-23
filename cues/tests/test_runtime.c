@@ -1,5 +1,10 @@
 /* SPDX-License-Identifier: GPL-3.0-only */
+#include "../cues.h"
+static int fixture_build_plan(const cues_config *, const az_track_snapshot *,
+                              const az_native_cue_snapshot *, uint32_t, cues_plan *);
+#define cues_build_plan fixture_build_plan
 #include "../cues.c"
+#undef cues_build_plan
 #include <assert.h>
 #include <stdio.h>
 #include <string.h>
@@ -13,6 +18,8 @@ static az_command_request submitted[16];
 static int submissions, acknowledgements, cancellations, threads, refusals;
 static int acknowledge_busy, phrase_available = 1, confirmations,
                              planned_count = 2;
+static int planning_status = AZ_OK;
+static int production_planner, tempo_available;
 static void (*confirm_callback)(int, void *);
 static void *confirm_user;
 static az_surface_v1 surface_descriptors[2];
@@ -98,10 +105,11 @@ void cues_settings_status(const char *text)
     snprintf(shown, sizeof shown, "%s", text);
 }
 void cues_settings_tick(void) {}
-int cues_build_plan(const cues_config *c, const az_track_snapshot *track,
+static int fixture_build_plan(const cues_config *c, const az_track_snapshot *track,
                     const az_native_cue_snapshot *existing, uint32_t rate,
                     cues_plan *out)
 {
+    if (production_planner) return cues_build_plan(c, track, existing, rate, out);
     assert(c->enabled);
     if (qualified_track || load_metadata) {
         assert(track->metadata.valid & AZ_META_ARTIST);
@@ -110,6 +118,7 @@ int cues_build_plan(const cues_config *c, const az_track_snapshot *track,
         assert(!(track->metadata.valid & (AZ_META_ARTIST | AZ_META_TITLE)));
     }
     assert(rate == 48000 && existing->revision);
+    if (planning_status != AZ_OK) return planning_status;
     *out = (cues_plan){ .count = planned_count };
     out->points[0] = (cues_point){ .classification = AZ_CUE_HOT,
                                    .slot = 2,
@@ -371,6 +380,7 @@ static void deliver(uint32_t rate, uint64_t epoch, int loaded)
     az_status_grid_v1 grid = { .header = { .size = sizeof grid, .version = AZ_DATA_VERSION, .supported = 1, .valid = 1 }, .current = beats, .current_info = receipt(epoch, AZ_STATUS_LOAD_SCOPE, 2) };
     az_status_key_v1 key = { .header = { .size = sizeof key, .version = AZ_DATA_VERSION, .supported = 1, .valid = 1 }, .original = "Am", .original_info = receipt(epoch, AZ_STATUS_LOAD_SCOPE, 2) };
     az_status_tempo_v1 tempo = { .header = { .size = sizeof tempo, .version = AZ_DATA_VERSION, .supported = 1, .valid = 1 }, .original_bpm = 120, .original_bpm_info = receipt(epoch, AZ_STATUS_LOAD_SCOPE, 1) };
+    if (tempo_available) view.tempo = &tempo;
     if (maps_mode) {
         grid.current_info.info.revision = maps_mode == 5 ? 8 : 7;
         phrases.header.valid = phrases.header.supported =
@@ -484,6 +494,86 @@ static void analysis_receipts(void)
     deliver(44100, 27, 1);
     assert(d->track.beat_count == 2 && d->grid_revision == 8 && d->track.phrase_count == 1);
 }
+static void absolute_without_phrases(void)
+{
+    cues_config_default(&config);
+    config.enabled = config.group_count = 1;
+    config.quantization = CUES_QUANT_OFF;
+    cues_group_default(&config.groups[0], &config);
+    config.groups[0].rule_count = 1;
+    cues_rule_default(&config.groups[0].rules[0], &config.groups[0]);
+    config.groups[0].rules[0].anchor = CUES_ABSOLUTE;
+    config.groups[0].rules[0].unit = CUES_SECONDS;
+    production_planner = tempo_available = 1;
+    config_changed();
+    maps_mode = 0;
+    phrase_available = 0;
+    submissions = 0;
+    bank.count = 0;
+    live.native_load_generation = bank.native_load_generation = 28;
+    deliver(44100, 28, 1);
+    step();
+    assert(atomic_load(&jobs[0].phase) == 1);
+    assert(worker_step());
+    step();
+    assert(submissions == 1 && submitted[0].expected_load_generation == 28);
+    az_command_completion c = terminal(AZ_COMMAND_UNCERTAIN, 0);
+    callback(&c, callback_user);
+    release(c);
+    /* Beat quantization must defer the whole plan until the grid arrives. */
+    config.quantization = CUES_QUANT_BEAT;
+    config_changed();
+    live.native_load_generation = bank.native_load_generation = 29;
+    deliver(44100, 29, 1);
+    step();
+    assert(worker_step());
+    step();
+    assert(submissions == 1 && !decks[0].plan_ready && !decks[0].auto_done_epoch);
+    maps_mode = 1;
+    deliver(44100, 29, 1);
+    step();
+    assert(worker_step());
+    step();
+    assert(submissions == 2 && submitted[1].expected_load_generation == 29);
+    c = terminal(AZ_COMMAND_UNCERTAIN, 0);
+    callback(&c, callback_user);
+    release(c);
+    production_planner = tempo_available = maps_mode = 0;
+}
+static void confirmation_after_reload(void)
+{
+    phrase_available = tempo_available = 1;
+    for (int yes = 0; yes <= 1; ++yes) {
+        uint64_t old_epoch = 30 + 2 * (uint64_t)yes;
+        live.native_load_generation = bank.native_load_generation = old_epoch;
+        bank.count = 1;
+        bank.entries[0] = (az_cue_entry){ .classification = AZ_CUE_HOT,
+            .slot = 1, .type = AZ_CUE_POINT, .valid = AZ_CUE_START, .start_s = 2 };
+        deliver(44100, old_epoch, 1);
+        manual_apply(0);
+        step();
+        assert(worker_step());
+        step();
+        assert(decks[0].confirming);
+        int before = submissions;
+        live.native_load_generation = bank.native_load_generation = old_epoch + 1;
+        bank.count = 0;
+        deliver(44100, old_epoch + 1, 1);
+        step();
+        assert(decks[0].confirming && !atomic_load(&jobs[0].phase));
+        confirm_callback(yes, confirm_user);
+        assert(!decks[0].auto_done_epoch && !decks[0].clearing);
+        step();
+        assert(worker_step());
+        step();
+        assert(submissions == before + 1);
+        assert(submitted[before].operation == AZ_CMD_CUE_POINT_SET &&
+               submitted[before].expected_load_generation == old_epoch + 1);
+        az_command_completion c = terminal(AZ_COMMAND_UNCERTAIN, 0);
+        callback(&c, callback_user);
+        release(c);
+    }
+}
 int main(void)
 {
     assert(az_mod_v1_entry()->on_frame == NULL &&
@@ -514,9 +604,14 @@ int main(void)
     step();
     assert(!submissions && !atomic_load(&jobs[0].phase));
     phrase_available = 0;
+    planning_status = AZ_PENDING;
     deliver(48000, 15, 1);
     step();
+    assert(worker_step());
+    step();
     assert(!atomic_load(&jobs[0].phase));
+    assert(!submissions && !decks[0].plan_ready);
+    planning_status = AZ_OK;
     phrase_available = 1;
     load_provenance = AZ_PROV_FILE;
     deliver(44100, 15, 1);
@@ -935,6 +1030,8 @@ int main(void)
     release(c);
     picker_interaction();
     analysis_receipts();
+    absolute_without_phrases();
+    confirmation_after_reload();
     puts(
         "Runtime passed: public SDK commands, native load fences, source rate, "
         "async cleanup, cache lag, disable and uncertainty");

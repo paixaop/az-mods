@@ -13,6 +13,11 @@ enum { CUES_BARS, CUES_BEATS, CUES_SECONDS };
 enum { CUES_INHERIT, CUES_QUANT_OFF, CUES_QUANT_BEAT, CUES_QUANT_BAR };
 enum { CUES_START, CUES_MIDDLE, CUES_END };
 enum { CUES_NO_LOOP, CUES_LOOP_FIXED, CUES_LOOP_FROM_START, CUES_LOOP_TO_END };
+enum {
+    CUES_COLOR_PINK, CUES_COLOR_RED, CUES_COLOR_ORANGE, CUES_COLOR_YELLOW,
+    CUES_COLOR_GREEN, CUES_COLOR_AQUA, CUES_COLOR_BLUE, CUES_COLOR_PURPLE,
+    CUES_NO_COLOR, CUES_COLOR_BY_PAD, CUES_COLOR_COUNT
+};
 /* Cues phrase selectors: 0 any, 1 intro, 2 up/build, 3 down/break,
  * 4 chorus/drop, 5 outro, 6 verse, 7 bridge. */
 typedef struct {
@@ -27,6 +32,11 @@ static inline int cues_rule_auto_pad(const cues_rule *rule)
     return rule->cue_type == AZ_CUE_HOT && rule->anchor == CUES_PHRASE &&
            rule->phrase_index == 0;
 }
+static inline int cues_rule_color_valid(const cues_rule *rule)
+{
+    return rule->color >= 0 && (rule->color < CUES_COLOR_BY_PAD ||
+           (rule->color == CUES_COLOR_BY_PAD && rule->cue_type == AZ_CUE_HOT));
+}
 typedef struct {
     int enabled, quantization, measures_in, rule_count;
     double min_bpm, max_bpm; /* zero inherits global range */
@@ -35,7 +45,7 @@ typedef struct {
 } cues_group;
 typedef struct {
     int enabled, max_memory, hot_pads, quantization, measures_in,
-        cue_preference;
+        cue_preference, consolidate_phrases;
     double min_bpm, max_bpm,
         min_distance; /* distance in original-track seconds */
     int group_count;
@@ -59,8 +69,8 @@ int cues_config_validate(const cues_config *config, char *error, size_t size);
 int cues_config_parse(cues_config *config, const char *json, size_t length,
                       char *error, size_t size);
 int cues_config_json(const cues_config *config, char *json, size_t capacity);
-extern const uint32_t cues_colors[9];
-extern const char *const cues_color_names[9];
+extern const uint32_t cues_colors[CUES_COLOR_BY_PAD];
+extern const char *const cues_color_names[CUES_COLOR_COUNT];
 extern const char *const cues_phrase_names[8];
 /* Pure evaluator. Actual source sample rate is mandatory. Existing native cues
  * are preserved; no command seeks or edits working/retained playback state. */

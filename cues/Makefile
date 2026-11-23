@@ -27,8 +27,8 @@ $(OUT)/$(MOD_ID).so: $(SRCS) $(HEADERS) | $(OUT)
 	$(CC) $(CFLAGS) $(LDFLAGS) -o $@ $(SRCS) $(LDLIBS)
 $(OUT)/test_plan: tests/test_plan.c plan.c config.c $(HEADERS) | $(OUT)
 	$(TEST_CC) $(HOST_FLAGS) -o $@ tests/test_plan.c plan.c config.c -lm
-$(OUT)/test_runtime: tests/test_runtime.c cues.c $(HEADERS) | $(OUT)
-	$(TEST_CC) $(HOST_FLAGS) -o $@ tests/test_runtime.c -lm
+$(OUT)/test_runtime: tests/test_runtime.c cues.c plan.c config.c $(HEADERS) | $(OUT)
+	$(TEST_CC) $(HOST_FLAGS) -o $@ tests/test_runtime.c plan.c config.c -lm
 $(OUT)/test_config: tests/test_config.c config.c $(HEADERS) | $(OUT)
 	$(TEST_CC) $(HOST_FLAGS) -o $@ tests/test_config.c config.c -lm
 $(OUT)/test_store: tests/test_store.c store.c config.c $(HEADERS) | $(OUT)
