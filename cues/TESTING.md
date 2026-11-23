@@ -29,8 +29,9 @@ on a test canvas.
    rule can place a cue while phrase analysis is pending. On a fresh load,
    verify rules requiring phrases or grid data wait for the required data.
 2. Apply a preset with hot and memory points and loops. Compare positions,
-   labels and pad colors with the preset. Reload the source and verify the
-   resulting cue bank is preserved.
+   labels and pad colors with the preset. On a batch-capable core, verify the
+   cue markers appear together in one update after the batch settles.
+   Repeat while playing. Reload the source and verify the saved bank.
 3. Load a track that already contains saved cues or loops. Verify automatic
    placement leaves the bank intact. Start manual replacement, change the load
    before answering the confirmation, then verify the new bank survives.

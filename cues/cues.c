@@ -45,7 +45,7 @@ static struct deck_state {
         native_revision, uncertain_load;
     uint64_t request;
     uint64_t view_deadline;
-    int pending, terminal, obsolete, acknowledge;
+    int pending, terminal, obsolete, acknowledge, batch_pending;
     az_command_result result;
 } decks[4];
 static struct plan_job {
@@ -548,6 +548,21 @@ static int completion_releases(const az_command_completion *c, const struct deck
     return 1;
 }
 
+static void complete_applied(int deck, struct deck_state *d)
+{
+    if (d->batch_pending) {
+        d->saved = d->plan.count;
+        finish_plan(deck, NULL);
+        return;
+    }
+    d->native_revision = d->result.revision;
+    d->view_deadline = now_ns() + UINT64_C(2000000000);
+    if (!d->deleting) {
+        ++d->next;
+        ++d->saved;
+    }
+}
+
 static void complete_plan(int deck, struct deck_state *d, const az_command_completion *completion)
 {
     if (d->obsolete || d->plan_epoch != d->epoch ||
@@ -555,12 +570,7 @@ static void complete_plan(int deck, struct deck_state *d, const az_command_compl
             /* A retired request only owns its acknowledgement/cleanup. Its
              * result cannot finish or consume the replacement track's load. */
     } else if (completion_applied(completion)) {
-        d->native_revision = d->result.revision;
-        d->view_deadline = now_ns() + UINT64_C(2000000000);
-        if (!d->deleting) {
-            ++d->next;
-            ++d->saved;
-        }
+        complete_applied(deck, d);
     } else {
             /* Uncertain writes are never retried: a saved effect may exist. */
         finish_plan(
@@ -596,6 +606,7 @@ static void command_complete(const az_command_completion *completion,
                d->terminal) {
         if (!completion_releases(completion, d)) return;
         d->pending = d->terminal = d->acknowledge = 0;
+        d->batch_pending = 0;
         d->request = 0;
         if (d->obsolete) {
             d->obsolete = 0;
@@ -1034,6 +1045,54 @@ static int automatic_has_cues(const struct deck_state *d, const az_native_cue_sn
     return !d->plan_manual && !d->next && (existing->count || d->live_count);
 }
 
+static az_cue_batch_entry batch_entry(const cues_point *point)
+{
+    az_cue_batch_entry entry = {
+        .classification = point->classification, .type = point->type,
+        .slot = point->slot, .rgb = point->rgb, .position_s = point->start_s,
+        .end_s = point->end_s
+    };
+    snprintf(entry.comment, sizeof entry.comment, "%s", point->comment);
+    return entry;
+}
+
+static int submit_plan_batch(int deck, uint64_t clock, const az_native_cue_snapshot *existing)
+{
+    struct deck_state *d = &decks[deck];
+    az_cue_batch_request batch = {
+        .size = sizeof batch, .version = AZ_DATA_VERSION, .deck = (uint32_t)deck,
+        .mode = d->plan_manual ? AZ_CUE_BATCH_REPLACE : AZ_CUE_BATCH_IF_EMPTY,
+        .request_id = ++next_request, .expected_load_generation = d->native_load,
+        .expected_revision = existing->revision,
+        .deadline_ns = clock + UINT64_C(30000000000), .count = d->plan.count
+    };
+    for (uint32_t i = 0; i < batch.count; ++i)
+        batch.entries[i] = batch_entry(&d->plan.points[i]);
+    az_command_result result = {.size = sizeof result};
+    d->request = batch.request_id;
+    d->pending = d->batch_pending = 1;
+    d->terminal = d->obsolete = d->acknowledge = 0;
+    int rc = Q->cue_batch_submit_async(CUES_ID, &batch, command_complete, d, &result);
+    if (rc != AZ_OK) {
+        d->pending = d->batch_pending = 0;
+        d->request = 0;
+    }
+    return rc;
+}
+
+static void submit_plan(int deck, uint64_t clock, const az_native_cue_snapshot *existing)
+{
+    if (!AZ_COMMANDS_HAS(Q, cue_batch_submit_async)) {
+        submit_plan_point(deck, clock, existing);
+        return;
+    }
+    int rc = submit_plan_batch(deck, clock, existing);
+    if (rc == AZ_UNSUPPORTED && next_request < UINT64_MAX)
+        submit_plan_point(deck, clock, existing);
+    else if (rc != AZ_OK && rc != AZ_PENDING && rc != AZ_BUSY)
+        finish_plan(deck, "SDK refused cue batch");
+}
+
 static void apply_plan(int i, uint64_t clock, const az_native_cue_snapshot *existing)
 {
     struct deck_state *d = &decks[i];
@@ -1056,7 +1115,7 @@ static void apply_plan(int i, uint64_t clock, const az_native_cue_snapshot *exis
         finish_plan(i, "request limit reached; restart required");
         return;
     }
-    submit_plan_point(i, clock, existing);
+    submit_plan(i, clock, existing);
 }
 static void advance_deck(int i, uint64_t clock, const cues_config *config)
 {
