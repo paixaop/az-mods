@@ -69,13 +69,20 @@ static void add_cand(an_cand_t *out, int *n, int max, uint32_t ms, uint32_t samp
     (*n)++;
 }
 
+static int first_downbeat(const an_analysis_t *a)
+{
+    for (int i = 0; i < a->nbeats; i++)
+        if (a->beats[i].beat_in_bar == 1) return i;
+    return a->nbeats;
+}
+
 static int grid_next(const an_analysis_t *a, uint32_t pos_ms, int bars, uint32_t *when, int maxn)
 {
     if (!a || !a->nbeats || bars <= 0) return 0;
     int stride = bars * 4;
     int found = 0;
-    for (int i = 0; i < a->nbeats && found < maxn; i++) {
-        if (i % stride != 0) continue;
+    /* Grid rows can begin mid-bar; count complete bars from the first downbeat. */
+    for (int i = first_downbeat(a); i < a->nbeats && found < maxn; i += stride) {
         if (a->beats[i].beat_in_bar != 1) continue;
         if (a->beats[i].time_ms <= pos_ms + 250) continue;
         when[found++] = a->beats[i].time_ms;
@@ -495,18 +502,11 @@ static double closest_exit(const plan_timing_t *t, const an_deck_t *b, const an_
         if (d <= 0) d += loop->len_ms;
     }
     double next_out = (double)t->now_ms + d / t->rate;
-    double best = next_out;
-    double best_err = best - t->exit_wall;
-    for (int k = 1; k < 64; k++) {
-        double x = next_out + (double)k * tloop;
-        double err = x - t->exit_wall;
-        if (fabs(err) < fabs(best_err)) {
-            best = x;
-            best_err = err;
-        }
-        if (x - t->exit_wall > tloop * 2) break;
-    }
-    return best;
+    /* Choose the nearest future pass without limiting the loop count. Exact
+     * ties keep the earlier pass, as the ascending search did. */
+    double passes = ceil((t->exit_wall - next_out) / tloop - 0.5);
+    if (passes < 0) passes = 0;
+    return next_out + passes * tloop;
 }
 
 static void aligned_loop(const plan_timing_t *t, double best, double tloop, an_plan_t *out)
@@ -555,13 +555,9 @@ static void paused_loop(const plan_timing_t *t, const an_deck_t *b, const an_loo
         /* B is paused: it is in (or will enter) a loop; find the next start window. */
     double d = (double)loop->out_ms - (double)b->pos_ms;
     if (d <= 0) {
-        if ((double)b->pos_ms < (double)loop->in_ms)
-            d = (double)loop->out_ms - (double)b->pos_ms; /* before the loop: play in */
-        else {
-            out->notice = AN_NOTICE_HEAD_PAST_LOOP;
-            set_action(out, AN_ST_OFF, 0, 2, "B HEAD IS PAST THE LOOP — CUE AT ITS START", 0, t->bar_ms, 0);
-            return;
-        }
+        out->notice = AN_NOTICE_HEAD_PAST_LOOP;
+        set_action(out, AN_ST_OFF, 0, 2, "B HEAD IS PAST THE LOOP — CUE AT ITS START", 0, t->bar_ms, 0);
+        return;
     }
     double base = t->exit_wall - d / t->rate;
     double earliest = (double)t->now_ms - AN_PLAY_GRACE_MS;
@@ -571,7 +567,6 @@ static void paused_loop(const plan_timing_t *t, const an_deck_t *b, const an_loo
     }
     double extra = floor((base - earliest) / tloop);
     if (extra < 0) extra = 0;
-    if (extra > 64) extra = 64;
     double start = base - extra * tloop;
     int loops = (int)extra + 1;
     char s[72], bs[32];

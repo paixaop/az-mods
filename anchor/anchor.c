@@ -743,6 +743,10 @@ static int paused(const an_deck_status_t *deck)
 
 static void choose_playing_decks(int *a, int *b)
 {
+    /* Starting or leaving a loop must not reverse an established transition. */
+    *a = cur_a;
+    *b = cur_b;
+    if (*a >= 0 && *b >= 0) return;
     for (int d = 0; d < AN_DECKS; d++) {
         const an_deck_status_t *other = &decks[1 - d];
         if (decks[d].loop_engaged && !other->loop_engaged && other->loop_availability == AZ_AVAIL_READY) {
@@ -751,9 +755,6 @@ static void choose_playing_decks(int *a, int *b)
             return;
         }
     }
-        /* Keep the roles after B starts or exits a loop on the same load. */
-    *a = cur_a;
-    *b = cur_b;
 }
 
 static int playback_known(const an_deck_status_t *deck)
