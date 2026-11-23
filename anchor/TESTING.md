@@ -18,6 +18,10 @@ and RESYNC. It verifies same-track reloads, eject, stale receipts, coherent phra
 grid revisions, borrowed-array lifetime, live cue edits and zero-time cues. Prepared
 loops, paused resizing and EXIT update the plan from the working loop fields. The
 planner suite checks PLAY grace and the exact start of the final EXIT pass.
+It also covers short loops requiring more than 64 passes, pitched playback,
+the approach from before loop-in, and grid targets on tracks that begin mid-bar.
+Lifecycle checks retain established A/B roles when the outgoing deck enters a
+loop, while still honoring an explicit incoming-deck change.
 
 The UI suite uses production drawing and input for Ribbon, Card, Sidebar and settings.
 It checks text bounds, picker paging and selection, separate A/B targets, **Set here**,

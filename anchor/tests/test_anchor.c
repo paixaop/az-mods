@@ -103,8 +103,93 @@ static int unavailable_and_phase_errors(void)
     return 0;
 }
 
+static int offset_grid_targets(void)
+{
+    an_beat_t beats[260];
+    an_analysis_t grid = { .beats = beats, .nbeats = 260 };
+    an_target_opts_t opts = { .rule = AN_RULE_GRID16 };
+    an_cand_t target, candidates[4];
+    /* An analysed track can start on any beat of the bar. */
+    for (unsigned first = 2; first <= 4; first++) {
+        for (unsigned i = 0; i < 260; i++)
+            beats[i] = (an_beat_t){ i * 500, 12000, (i + first - 1) % 4 + 1 };
+        uint32_t origin = (5 - first) * 500;
+        opts.rule = AN_RULE_GRID16;
+        CHECK(an_auto_target(&grid, 2000, &opts, &target) == 0);
+        CHECK(same_time(target.ms, origin + 32000, TRACK_RATE));
+        CHECK(an_candidates(&grid, 2000, TRACK_RATE, &opts, candidates, 4) == 3);
+        for (unsigned i = 0; i < 3; i++)
+            CHECK(same_time(candidates[i].ms, origin + (i + 1) * 32000, TRACK_RATE));
+        opts.rule = AN_RULE_GRID32;
+        CHECK(an_auto_target(&grid, 2000, &opts, &target) == 0);
+        CHECK(same_time(target.ms, origin + 64000, TRACK_RATE));
+    }
+    for (unsigned i = 0; i < 260; i++) beats[i].beat_in_bar = 0;
+    CHECK(an_auto_target(&grid, 0, &opts, &target) < 0);
+    return 0;
+}
+
+static int long_loop_countdowns(void)
+{
+    an_deck_t a = deck(0, 1), b = deck(0, 1);
+    an_loop_t loop = { .valid = 1, .in_ms = 0, .out_ms = 500, .len_ms = 500 };
+    an_cand_t target = { .ms = 8000, .label = "DROP" };
+    an_plan_t p;
+    const uint64_t now = UINT64_C(5000000000);
+    /* A one-beat loop can need hundreds of passes before a distant target. */
+    an_plan_target(&a, &b, &loop, 128000, "TARGET", &target, now, &p);
+    CHECK(p.state == AN_ST_WAIT && !p.window_open);
+    CHECK(same_time(p.out_wall_ms, now + 120500, 1000));
+    CHECK(fabs(p.bars_action - 60.0) < 0.000001);
+    b.playing = 0;
+    an_plan_target(&a, &b, &loop, 128000, "TARGET", &target, now, &p);
+    CHECK(p.state == AN_ST_START && p.play_now && p.loops == 241);
+    CHECK(same_time(p.action_wall_ms, now, 1000));
+
+    /* Playback rates and travel after OUT are still included. */
+    a.rate = b.rate = 1.25;
+    b.playing = 1;
+    an_plan_target(&a, &b, &loop, 128000, "TARGET", &target, now, &p);
+    CHECK(p.state == AN_ST_WAIT);
+    CHECK(same_time(p.out_wall_ms, now + 96400, 1000));
+    b.playing = 0;
+    an_plan_target(&a, &b, &loop, 128000, "TARGET", &target, now, &p);
+    CHECK(p.state == AN_ST_START && p.play_now && p.loops == 241);
+    CHECK(same_time(p.action_wall_ms, now, 1000));
+
+    a.rate = b.rate = 1.0;
+    b.playing = 1;
+    a.pos_ms = 119999;
+    b.pos_ms = 499;
+    an_plan_target(&a, &b, &loop, 128000, "TARGET", &target, now, &p);
+    CHECK(p.state == AN_ST_WAIT && !p.window_open && p.bars_action > 0);
+    a.pos_ms = 120000;
+    b.pos_ms = 0;
+    an_plan_target(&a, &b, &loop, 128000, "TARGET", &target, now + 1, &p);
+    CHECK(p.state == AN_ST_OPEN && p.window_open);
+    CHECK(same_time(p.out_wall_ms, now + 501, 1000));
+
+    /* A phase exactly between two passes continues to prefer the earlier pass. */
+    a.pos_ms = 0;
+    an_plan_target(&a, &b, &loop, 8250, "TARGET", &target, now, &p);
+    CHECK(p.state == AN_ST_OFF && strstr(p.line2, "EARLY BY 250"));
+    CHECK(same_time(p.action_wall_ms, now + 500, 1000));
+
+    /* A paused head before IN includes the approach before the repeated passes. */
+    b.playing = 0;
+    loop.in_ms = 1000;
+    loop.out_ms = 1500;
+    an_plan_target(&a, &b, &loop, 128000, "TARGET", &target, now, &p);
+    CHECK(p.state == AN_ST_START && p.play_now && p.loops == 241);
+    CHECK(same_time(p.action_wall_ms, now, 1000));
+    return 0;
+}
+
 int main(void)
 {
+    int regressions = offset_grid_targets();
+    regressions += long_loop_countdowns();
+    CHECK(regressions == 0);
     CHECK(fallback_targets() == 0);
     CHECK(unavailable_and_phase_errors() == 0);
     an_beat_t beats[40];

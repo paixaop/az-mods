@@ -371,6 +371,31 @@ static void missing_data_and_fallbacks(void)
     assert(accent_rgb(2) == 0xffb340 && accent_rgb(3) == 0xff453a);
 }
 
+static void stable_playing_roles(void)
+{
+    fixture_t a = { 0 }, b = { 0 };
+    settings_set(SET_DECK, 0);
+    loaded(&a, 0, 200, AZ_PLAYBACK_PLAYING, 1);
+    loaded(&b, 1, 201, AZ_PLAYBACK_PAUSED, 16);
+    publish(&a, AZ_STATUS_INITIAL, watch.topics);
+    publish(&b, AZ_STATUS_INITIAL, watch.topics);
+    assert(cur_a == 0 && cur_b == 1);
+    playback(&b, AZ_PLAYBACK_PLAYING);
+    publish(&b, AZ_STATUS_CHANGE, AZ_STATUS_TOPIC(AZ_STATUS_TRANSPORT));
+    assert(cur_a == 0 && cur_b == 1);
+    /* Looping A after B starts must not swap the transition's destinations. */
+    open_b_selector(1);
+    loop_bounds(&a, 1, 0, 4);
+    publish(&a, AZ_STATUS_CHANGE, AZ_STATUS_TOPIC(AZ_STATUS_LOOP));
+    assert(cur_a == 0 && cur_b == 1 && sel_open && sel_deck == 1);
+    expect_ms(b_targets[1].target.ms, 32000, b.rate);
+    settings_set(SET_DECK, 1);
+    assert(cur_a == 1 && cur_b == 0 && !sel_open);
+    /* Without established roles, Auto still uses the uniquely looping deck. */
+    settings_set(SET_DECK, 0);
+    assert(cur_a == 1 && cur_b == 0);
+}
+
 int main(void)
 {
     const az_mod_v1 *mod = az_mod_v1_entry();
@@ -512,6 +537,7 @@ int main(void)
     assert(!decks[1].loaded && !b_targets[1].valid && !strip_shown);
 
     missing_data_and_fallbacks();
+    stable_playing_roles();
 
     puts("Deck events passed: load epochs, prepared loops, EXIT timing, borrowed maps, cue edits and resync");
 }
