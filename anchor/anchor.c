@@ -933,7 +933,7 @@ static int drawing_services_ready(const az_core_v1 *core)
 
 static int core_services_ready(const az_core_v1 *core)
 {
-    return AZ_HAS(core, library_service) && surface_services_ready(core) && drawing_services_ready(core) && AZ_HAS(core, request_redraw);
+    return AZ_HAS(core, observation_service) && surface_services_ready(core) && drawing_services_ready(core) && AZ_HAS(core, request_redraw);
 }
 
 static void register_settings(const az_screen_v1 *settings)
@@ -955,8 +955,8 @@ static void register_settings(const az_screen_v1 *settings)
 static int init(const az_core_v1 *core)
 {
     if (!core_services_ready(core)) return -1;
-    const az_library_v1 *lib = core->library_service(AZ_LIBRARY_ABI);
-    if (!AZ_LIB_HAS(lib, on_deck_status) || !AZ_LIB_HAS(lib, deck_status_release)) {
+    const az_observation_v1 *lib = core->observation_service(AZ_OBSERVATION_ABI);
+    if (!AZ_OBSERVATION_HAS(lib, on_deck_status) || !AZ_OBSERVATION_HAS(lib, deck_status_release)) {
         if (AZ_HAS(core, log)) core->log(MOD_ID, "Deck status requires AZ-MODS " AZ_DECK_STATUS_MIN_CORE);
         return -1;
     }

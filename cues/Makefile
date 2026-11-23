@@ -17,7 +17,7 @@ LDFLAGS := -shared -static-libgcc -Wl,--no-undefined -Wl,--hash-style=gnu
 LDLIBS := -lm -lpthread
 NO_OUTLINE_ATOMICS := $(shell printf 'int main(void){return 0;}\n' | $(CC) -mno-outline-atomics -x c -o /dev/null - 2>/dev/null && echo -mno-outline-atomics)
 CFLAGS += $(NO_OUTLINE_ATOMICS)
-HEADERS := cues.h store.h $(addprefix $(AZ_SDK_INCLUDE)/,azmod-mod.h azmod-data-helpers.h azmod-timestamps.h)
+HEADERS := cues.h store.h $(addprefix $(AZ_SDK_INCLUDE)/,azmod-mod.h azmod-data-helpers.h azmod-timestamps.h azmod-phrases.h)
 HOST_FLAGS := -std=c11 -O1 -g -Wall -Wextra -Werror -D_GNU_SOURCE -I. -I$(AZ_SDK_INCLUDE) $(UNIT_SAN_FLAGS)
 .PHONY: all unit test clean
 all: $(OUT)/$(MOD_ID).so

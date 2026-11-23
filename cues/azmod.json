@@ -9,7 +9,7 @@
   "license": "GPL-3.0-only",
   "source": "https://github.com/paixaop/az-mods/tree/main/cues",
   "category": "tools",
-  "api": 1,
+  "api": 2,
   "firmware": ["any"],
   "hooks": false,
   "min_core": "1.2.8"

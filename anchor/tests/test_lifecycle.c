@@ -98,21 +98,21 @@ static int release(const char *id, az_deck_subscription handle)
     return AZ_OK;
 }
 
-static const az_library_v1 *library(uint32_t abi)
+static const az_observation_v1 *library(uint32_t abi)
 {
-    static const az_library_v1 lib = {
+    static const az_observation_v1 lib = {
         .size = sizeof lib,
-        .abi = AZ_LIBRARY_ABI,
+        .abi = AZ_OBSERVATION_ABI,
         .on_deck_status = subscribe,
         .deck_status_release = release,
     };
-    return abi == AZ_LIBRARY_ABI ? &lib : NULL;
+    return abi == AZ_OBSERVATION_ABI ? &lib : NULL;
 }
 
 static const az_core_v1 core = {
     .size = sizeof core,
     .abi = AZ_MOD_ABI,
-    .library_service = library,
+    .observation_service = library,
     .surface_create = create,
     .surface_show = show,
     .surface_place = place,
@@ -376,7 +376,7 @@ int main(void)
     const az_mod_v1 *mod = az_mod_v1_entry();
     assert(!mod->tick && !mod->on_frame);
     az_core_v1 no_status = core;
-    no_status.library_service = NULL;
+    no_status.observation_service = NULL;
     assert(mod->init(&no_status) != AZ_OK);
     assert(mod->init(&core) == AZ_OK && listener && nsurfaces == 2);
     assert(!strip_shown && !tab_shown);

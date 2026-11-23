@@ -66,6 +66,16 @@ static int fallback_targets(void)
     CHECK(an_phrase_category(1, 2) == AN_CAT_BUILD && an_phrase_category(2, 2) == AN_CAT_VERSE);
     CHECK(an_phrase_category(3, 9) == AN_CAT_CHORUS && an_phrase_category(0, 5) == AN_CAT_CHORUS);
     CHECK(an_phrase_category(1, 40) == AN_CAT_OTHER && an_phrase_category(0, 2) == AN_CAT_OTHER);
+    static const int high[] = { 0, 1, 2, 3, 0, 4, 5, 0, 0, 0, 0 };
+    static const int other[] = { 0, 1, 6, 6, 6, 6, 6, 6, 7, 4, 5 };
+    static const int unknown[] = { 0, 1, 0, 0, 0, 4, 5, 0, 7, 4, 5 };
+    for (unsigned kind = 0; kind < 11; ++kind) {
+        CHECK(an_phrase_category(1, kind) == high[kind]);
+        CHECK(an_phrase_category(2, kind) == other[kind]);
+        CHECK(an_phrase_category(3, kind) == other[kind]);
+        CHECK(an_phrase_category(0, kind) == unknown[kind]);
+        CHECK(an_phrase_category(99, kind) == unknown[kind]);
+    }
     return 0;
 }
 
