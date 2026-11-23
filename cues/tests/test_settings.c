@@ -198,6 +198,10 @@ int main(void)
     cues_settings_status(NULL);
     assert(redraws == status_redraws + 2 && !runtime_status[0]);
     screen.on_enter(NULL);
+    go(GLOBAL);
+    press_field("Consolidate phrases");
+    assert(config.consolidate_phrases && !cues_settings_config()->consolidate_phrases);
+    go(GROUPS);
     paint(800, 420);
     press_action(A_NEW_GROUP);
     assert(config.group_count == 1 && view == GROUP);
@@ -216,7 +220,10 @@ int main(void)
     for (int i = 0; i < 10; ++i) press_field("Occurrence");
     assert(config.groups[0].rules[0].phrase_index == 0);
     check_pad_field(1, "*");
+    for (int i = CUES_COLOR_RED; i < CUES_COLOR_BY_PAD; ++i) press_field("Cue color");
+    assert(config.groups[0].rules[0].color == CUES_COLOR_BY_PAD);
     press_field("Cue type");
+    assert(config.groups[0].rules[0].color == CUES_COLOR_RED);
     check_pad_field(1, "-");
     press_field("Cue type");
     check_pad_field(1, "*");
@@ -249,6 +256,7 @@ int main(void)
     assert(!cues_settings_config()->group_count);
     press_action(A_APPLY);
     assert(!draft_pending && events == 1 && cues_settings_config()->group_count == 1);
+    assert(cues_settings_config()->consolidate_phrases);
     assert(!strcmp(cues_settings_config()->groups[0].rules[0].name, "AB"));
     cues_settings_tick();
     assert(pending_save && stored.groups[0].rule_count == 1);
@@ -272,7 +280,7 @@ int main(void)
     assert(dirty && events == 2);
     assert(strstr(storage_status, "busy"));
     assert(strcmp(stored.groups[0].name, "Newer draft"));
-    completed_result = 1;
+    completed_result = -1; /* Failure of the older save must not drop this draft. */
     cues_settings_tick();
     assert(pending_save && !strcmp(stored.groups[0].name, "Newer draft"));
     completed_result = -1;

@@ -17,6 +17,8 @@ int main(void)
 {
     cues_config_default(&original);
     assert(!original.enabled && original.max_memory == 10 && original.hot_pads == 8);
+    assert(!original.consolidate_phrases);
+    original.consolidate_phrases = 1;
     assert(cues_config_validate(&original, error, sizeof error));
     original.group_count = CUES_MAX_GROUPS;
     for (int i = 0; i < CUES_MAX_GROUPS; i++) {
@@ -53,6 +55,7 @@ int main(void)
     rejected("{}");
     rejected("{\"config\":{},\"groups\":[],\"groups\":[]}");
     rejected("{\"config\":{\"maxMemoryCues\":16},\"groups\":[]}");
+    rejected("{\"config\":{\"consolidatePhrases\":1},\"groups\":[]}");
     rejected("{\"config\":{\"minBpm\":200,\"maxBpm\":70},\"groups\":[]}");
     rejected("{\"config\":{\"silenceThreshold\":0.02},\"groups\":[]}");
     rejected(
@@ -98,12 +101,14 @@ int main(void)
            parsed.groups[0].rules[0].loop_mode == CUES_LOOP_TO_END);
     const char *automatic =
         "{\"config\":{},\"groups\":[{\"name\":\"All\",\"rules\":[{\"data\":{"
-        "\"pad\":\"*\",\"anchor\":{\"type\":\"phrase\",\"phrases\":[{\"type\":\"Chorus/Drop\","
+        "\"pad\":\"*\",\"color\":\"By pad\",\"anchor\":{\"type\":\"phrase\",\"phrases\":[{\"type\":\"Chorus/Drop\","
         "\"index\":\"All\"}]},\"type\":\"hot\"}}]}]}";
     assert(cues_config_parse(&parsed, automatic, strlen(automatic), error, sizeof error));
+    assert(!parsed.consolidate_phrases);
     assert(cues_rule_auto_pad(&parsed.groups[0].rules[0]));
+    assert(parsed.groups[0].rules[0].color == CUES_COLOR_BY_PAD);
     n = cues_config_json(&parsed, json, sizeof json);
-    assert(n > 0 && strstr(json, "\"pad\":\"*\""));
+    assert(n > 0 && strstr(json, "\"pad\":\"*\"") && strstr(json, "\"color\":\"By pad\""));
     cues_config round_trip = parsed;
     assert(cues_config_parse(&parsed, json, (size_t)n, error, sizeof error));
     assert(!memcmp(&parsed, &round_trip, sizeof parsed));
@@ -116,6 +121,9 @@ int main(void)
     rejected(
         "{\"config\":{},\"groups\":[{\"rules\":[{\"data\":{\"type\":\"memory\",\"pad\":\"*\","
         "\"anchor\":{\"type\":\"phrase\",\"phrases\":[{\"type\":\"Intro\",\"index\":\"All\"}]}}}]}]}");
+    rejected(
+        "{\"config\":{},\"groups\":[{\"rules\":[{\"data\":{\"type\":\"memory\",\"color\":\"By pad\","
+        "\"anchor\":{\"type\":\"absolute\",\"absolute\":{\"value\":0,\"unit\":\"seconds\"}}}}]}]}");
     /* Deterministic malformed-input sweep checks atomic rejection and token bounds. */
     for (unsigned i = 0; i < 1000; i++) {
         char garbage[128];

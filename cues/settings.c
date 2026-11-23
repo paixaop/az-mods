@@ -256,7 +256,8 @@ static void build_rule(cues_rule *r)
         number_field("Loop length", &r->loop_length, 0.1, 86400, 1);
         choice_field("Loop units", &r->loop_unit, unit_names, 3, 0);
     }
-    choice_field("Cue color", &r->color, cues_color_names, 9, 0);
+    int color_count = r->cue_type == AZ_CUE_HOT ? CUES_COLOR_COUNT : CUES_COLOR_BY_PAD;
+    choice_field("Cue color", &r->color, cues_color_names, color_count, 0);
     text_field("Name template", r->name, sizeof r->name);
     text_field("Comment template", r->comment, sizeof r->comment);
     action("Delete rule...", A_DELETE_RULE, 0);
@@ -264,6 +265,7 @@ static void build_rule(cues_rule *r)
 static void build_global(void)
 {
     choice_field("Apply on track load", &config.enabled, onoff, 2, 0);
+    choice_field("Consolidate phrases", &config.consolidate_phrases, onoff, 2, 0);
     integer_field("Maximum memory cues", &config.max_memory, 0, 10);
     integer_field("Hot cue pads", &config.hot_pads, 1, 8);
     number_field("Minimum BPM", &config.min_bpm, 1, config.max_bpm, 1);
@@ -477,13 +479,14 @@ static void cycle_choice(const field *f)
 {
     int *value = f->value;
     *value = *value >= f->max ? f->min : *value + 1;
-    if (view == RULE && f->value == &config.groups[group_index].rules[rule_index].anchor &&
-        *value == CUES_ABSOLUTE) {
-        cues_rule *r = &config.groups[group_index].rules[rule_index];
+    if (view != RULE) return;
+    cues_rule *r = &config.groups[group_index].rules[rule_index];
+    if (f->value == &r->anchor && *value == CUES_ABSOLUTE) {
         r->offset = 0;
         if (r->loop_mode >= CUES_LOOP_FROM_START)
             r->loop_mode = CUES_NO_LOOP;
     }
+    if (!cues_rule_color_valid(r)) r->color = CUES_COLOR_RED;
 }
 
 static void change_field(int index)
@@ -929,7 +932,9 @@ void cues_settings_tick(void)
             saved_revision = completed;
             dirty = active_revision != saved_revision;
         } else
-            dirty = 0;
+            /* Do not retry the failed revision automatically, but retain a
+             * newer Apply queued while that write was in flight. */
+            dirty = active_revision != completed;
         redraw();
     }
     if (dirty && storage_ok) {

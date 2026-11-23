@@ -7,10 +7,10 @@
 #include <stdlib.h>
 #include <string.h>
 
-const uint32_t cues_colors[9] = { 0xff00c6, 0xff0000, 0xff7100, 0xffff00, 0x00e300,
-                                  0x00c3ff, 0x0051ff, 0x9c08ff, 0 };
-const char *const cues_color_names[9] = { "Pink", "Red", "Orange", "Yellow", "Green",
-                                          "Aqua", "Blue", "Purple", "No Color" };
+const uint32_t cues_colors[CUES_COLOR_BY_PAD] = { 0xff00c6, 0xff0000, 0xff7100, 0xffff00, 0x00e300,
+                                                0x00c3ff, 0x0051ff, 0x9c08ff, 0 };
+const char *const cues_color_names[CUES_COLOR_COUNT] = { "Pink", "Red", "Orange", "Yellow", "Green",
+                                                       "Aqua", "Blue", "Purple", "No Color", "By pad" };
 const char *const cues_phrase_names[8] = { "Any", "Intro", "Build", "Break",
                                            "Chorus/Drop", "Outro", "Verse", "Bridge" };
 static const char *const units[] = { "bars", "beats", "seconds" };
@@ -50,7 +50,7 @@ void cues_rule_default(cues_rule *r, const cues_group *g)
     r->phrase_type = 1;
     r->unit = r->offset_unit = r->loop_unit = g->measures_in;
     r->loop_length = 8;
-    r->color = 1;
+    r->color = CUES_COLOR_RED;
     snprintf(r->name, sizeof r->name, "{phrase}");
 }
 static int range(int v, int a, int b)
@@ -71,7 +71,8 @@ static int cue_type_valid(int type)
 }
 static int config_limits_valid(const cues_config *c)
 {
-    return range(c->enabled, 0, 1) && range(c->max_memory, 0, 10) && range(c->hot_pads, 1, 8) &&
+    return range(c->enabled, 0, 1) && range(c->consolidate_phrases, 0, 1) &&
+           range(c->max_memory, 0, 10) && range(c->hot_pads, 1, 8) &&
            range(c->quantization, 1, 3) && range(c->measures_in, 0, 2) && cue_type_valid(c->cue_preference);
 }
 static int config_valid(const cues_config *c)
@@ -113,7 +114,7 @@ static int rule_loop_valid(const cues_rule *r)
 }
 static int rule_valid(const cues_rule *r)
 {
-    return rule_target_valid(r) && rule_position_valid(r) && rule_loop_valid(r) && range(r->color, 0, 8) &&
+    return rule_target_valid(r) && rule_position_valid(r) && rule_loop_valid(r) && cues_rule_color_valid(r) &&
            terminated(r->name, sizeof r->name) && terminated(r->comment, sizeof r->comment);
 }
 int cues_config_validate(const cues_config *c, char *e, size_t n)
@@ -627,7 +628,7 @@ static int rule_loop(parser *p, int v, cues_rule *r)
 static int rule_style(parser *p, int f, int v, cues_rule *r)
 {
     if (f == 6)
-        CHECK(choice(p, v, cues_color_names, 9, &r->color));
+        CHECK(choice(p, v, cues_color_names, CUES_COLOR_COUNT, &r->color));
     else if (f == 7)
         CHECK(str(p, v, r->name, sizeof r->name));
     else
@@ -750,9 +751,11 @@ static int group(parser *p, int i, cues_group *g)
 static int global_field(parser *p, int f, int v, cues_config *c)
 {
     if (f == 0) return boolean(p, v, &c->enabled);
-    if (f == 1) return integer(p, v, &c->max_memory);
-    if (f == 2) return integer(p, v, &c->hot_pads);
-    if (f >= 3 && f <= 5) {
+    if (f <= 2) {
+        int *values[] = { &c->max_memory, &c->hot_pads };
+        return integer(p, v, values[f - 1]);
+    }
+    if (f <= 5) {
         double *values[] = { &c->min_bpm, &c->max_bpm, &c->min_distance };
         return number(p, v, values[f - 3]);
     }
@@ -764,14 +767,15 @@ static int global_field(parser *p, int f, int v, cues_config *c)
         return 1;
     }
     if (f == 7) return choice(p, v, quant, 4, &c->quantization);
-    return choice(p, v, measures, 3, &c->measures_in);
+    if (f == 8) return choice(p, v, measures, 3, &c->measures_in);
+    return boolean(p, v, &c->consolidate_phrases);
 }
 
 static int globals(parser *p, int i, cues_config *c)
 {
     static const char *const keys[] = { "enabled", "maxMemoryCues", "hotCuePads",
                                         "minBpm", "maxBpm", "minDistance",
-                                        "cuePreference", "quantization", "measuresIn" };
+                                        "cuePreference", "quantization", "measuresIn", "consolidatePhrases" };
     OBJECT(p, i, keys)
     CHECK(global_field(p, f, v, c));
     END_OBJECT return 1;
@@ -941,10 +945,10 @@ int cues_config_json(const cues_config *c, char *json, size_t capacity)
            "{\n  \"version\":1,\n  "
            "\"config\":{\"enabled\":%s,\"maxMemoryCues\":%d,\"hotCuePads\":%d,\"minBpm\":%.17g,"
            "\"maxBpm\":%.17g,\"minDistance\":%.17g,\"cuePreference\":\"%s\",\"quantization\":\"%"
-           "s\",\"measuresIn\":\"%s\"},\n  \"groups\":[",
+           "s\",\"measuresIn\":\"%s\",\"consolidatePhrases\":%s},\n  \"groups\":[",
            c->enabled ? "true" : "false", c->max_memory, c->hot_pads, c->min_bpm, c->max_bpm,
            c->min_distance, c->cue_preference == AZ_CUE_HOT ? "Hot Cue" : "Memory Cue",
-           quant[c->quantization], measures[c->measures_in]);
+           quant[c->quantization], measures[c->measures_in], c->consolidate_phrases ? "true" : "false");
     for (int i = 0; i < c->group_count; i++) write_group(&w, &c->groups[i], i);
     writef(&w, "\n  ]\n}\n");
     return w.okay ? (int)w.p : 0;

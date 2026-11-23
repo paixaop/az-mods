@@ -292,7 +292,9 @@ static void label(cues_point *point, const cues_rule *r, const cues_group *g,
 {
     char name[128], comment[128], length[32] = "0";
     label_length(length, sizeof length, point, r, g, m, phrase_start, phrase_end);
-    const char *phrase = r->anchor == CUES_PHRASE ? cues_phrase_names[category] : "Absolute";
+    const char *phrase = "Absolute";
+    if (r->anchor == CUES_PHRASE)
+        phrase = category == AZ_PHRASE_CHORUS ? "Chorus" : cues_phrase_names[category];
     expand(name, sizeof name, r->name, phrase, length);
     expand(comment, sizeof comment, r->comment, phrase, length);
     point->comment[0] = 0;
@@ -414,6 +416,15 @@ static int point_offset(const cues_rule *r, const clock_map *m, double *anchor)
     if (r->anchor != CUES_PHRASE || !r->offset) return 1;
     return shift(m, *anchor, r->offset, r->offset_unit, anchor);
 }
+static uint32_t cue_rgb(const cues_rule *r, int slot)
+{
+    static const int pad_colors[] = {
+        CUES_COLOR_RED, CUES_COLOR_GREEN, CUES_COLOR_AQUA, CUES_COLOR_BLUE,
+        CUES_COLOR_PURPLE, CUES_COLOR_PINK, CUES_COLOR_ORANGE, CUES_COLOR_YELLOW
+    };
+    int color = r->color == CUES_COLOR_BY_PAD ? pad_colors[slot - 1] : r->color;
+    return cues_colors[color];
+}
 static int make_point(const cues_config *c, const cues_group *g, const cues_rule *r,
                       const clock_map *m, const az_native_cue_snapshot *existing,
                       cues_plan *out, int slot, int category, double start, double end)
@@ -428,7 +439,7 @@ static int make_point(const cues_config *c, const cues_group *g, const cues_rule
     if (!time_range(m, p.start_s)) return 0;
     p.classification = (uint32_t)r->cue_type;
     p.slot = r->cue_type == AZ_CUE_HOT ? (uint32_t)slot : 0;
-    p.rgb = cues_colors[r->color];
+    p.rgb = cue_rgb(r, slot);
     label(&p, r, g, m, category, start, end);
     return insert(c, existing, m->rate, out, &p);
 }
@@ -488,7 +499,7 @@ static int plan_group_valid(const cues_group *g)
 static int plan_rule_placement_valid(const cues_rule *r)
 {
     return r->anchor >= CUES_PHRASE && r->anchor <= CUES_ABSOLUTE &&
-           r->color >= 0 && r->color <= 8 && r->pad >= 1 && r->pad <= 8;
+           cues_rule_color_valid(r) && r->pad >= 1 && r->pad <= 8;
 }
 static int plan_rule_units_valid(const cues_rule *r)
 {
@@ -527,6 +538,16 @@ static int plan_phrase_range_valid(const az_track_snapshot *s, uint32_t pi)
     return p->start_beat < p->end_beat && p->end_beat < s->beat_count &&
            (!pi || p->start_beat >= s->phrases[pi - 1].end_beat);
 }
+static int plan_phrases_join(const az_track_snapshot *s, uint32_t next, int category)
+{
+    return next < s->phrase_count && s->phrases[next].start_beat == s->phrases[next - 1].end_beat &&
+           plan_phrase_range_valid(s, next) && phrase_category(&s->phrases[next]) == category;
+}
+static uint32_t plan_phrase_last(const az_track_snapshot *s, uint32_t pi, int category)
+{
+    while (plan_phrases_join(s, pi + 1, category)) ++pi;
+    return pi;
+}
 static void plan_phrase_points(const struct plan_builder *b, const cues_group *g, const cues_rule *r)
 {
     const az_track_snapshot *s = b->track;
@@ -536,12 +557,15 @@ static void plan_phrase_points(const struct plan_builder *b, const cues_group *g
         if (!room(b->config, b->existing, b->out, r->cue_type, slot)) break;
         const az_phrase *p = &s->phrases[pi];
         int category = phrase_category(p);
+        int valid = plan_phrase_range_valid(s, pi);
+        if (b->config->consolidate_phrases && valid) pi = plan_phrase_last(s, pi, category);
         if (!plan_phrase_selected(r, category, &match)) continue;
-        if (!plan_phrase_range_valid(s, pi)) {
+        if (!valid) {
             ++b->out->skipped;
             continue;
         }
-        double start = s->beats[p->start_beat].time_s, end = s->beats[p->end_beat].time_s;
+        double start = s->beats[p->start_beat].time_s;
+        double end = s->beats[s->phrases[pi].end_beat].time_s;
         if (!make_point(b->config, g, r, b->map, b->existing, b->out, slot, category, start, end)) ++b->out->skipped;
     }
 }
@@ -549,12 +573,23 @@ static int plan_phrases_ready(const struct plan_builder *b)
 {
     return b->map->grid_valid && ready(&b->track->phrases_info) && b->track->phrases && b->track->phrase_count;
 }
+static int absolute_needs_grid(const cues_config *c, const cues_group *g, const cues_rule *r)
+{
+    int quant = g->quantization == CUES_INHERIT ? c->quantization : g->quantization;
+    return r->unit != CUES_SECONDS || quant != CUES_QUANT_OFF ||
+           (r->loop_mode == CUES_LOOP_FIXED && r->loop_unit != CUES_SECONDS);
+}
+static int plan_rule_ready(const struct plan_builder *b, const cues_group *g, const cues_rule *r)
+{
+    if (r->anchor == CUES_PHRASE) return plan_phrases_ready(b);
+    return !absolute_needs_grid(b->config, g, r) || b->map->grid_valid;
+}
 static int plan_rule(const struct plan_builder *b, const cues_group *g, const cues_rule *r)
 {
     if (!plan_rule_valid(r)) return AZ_INVALID;
-    /* A newly loaded empty phrase bank must not consume automatic placement
-     * with an absolute subset before Track Analysis publishes its result. */
-    if (r->anchor == CUES_PHRASE && !plan_phrases_ready(b)) {
+    /* Required maps may arrive after the first usable seconds-based rule.
+     * Wait for the entire plan before consuming automatic placement. */
+    if (!plan_rule_ready(b, g, r)) {
         memset(b->out, 0, sizeof *b->out);
         return AZ_PENDING;
     }

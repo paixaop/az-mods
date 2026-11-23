@@ -173,7 +173,8 @@ static void receive_epoch(const az_deck_status_event_v1 *e, struct deck_state *d
             d->auto_done_epoch = 0;
         d->epoch = e->load_epoch;
         d->loaded = 0;
-        d->cues_known = d->live_count = d->manual_requested = d->confirming = 0;
+        d->cues_known = d->live_count = d->manual_requested = 0;
+        /* Keep an open dialog owned by its old plan until its callback runs. */
         d->head_rate = 0;
         d->grid_revision = d->phrase_revision = 0;
         d->track = (az_track_snapshot){ .size = sizeof d->track,
@@ -726,11 +727,20 @@ static int replacement_state_valid(const struct deck_state *d)
              !d->cues_known || d->cue_serial != d->confirm_cue_serial);
 }
 
+static int confirmation_plan_current(const struct deck_state *d)
+{
+    return d->plan_epoch == d->epoch && d->plan_config == config_revision;
+}
+
 static void confirm_replace(int yes, void *user)
 {
     struct deck_state *d = user;
     int deck = (int)(d - decks);
     d->confirming = 0;
+    if (!confirmation_plan_current(d)) {
+        status(deck, "track or rules changed; replacement cancelled");
+        return;
+    }
     if (!yes) {
         finish_plan(deck, "replacement cancelled");
         return;
@@ -879,20 +889,14 @@ static int preserve_existing(int i, const az_native_cue_snapshot *existing)
     }
     return 0;
 }
-static int phrase_analysis_available(const struct deck_state *d)
-{
-    return d->track.phrases_info.availability == AZ_AVAIL_READY || d->track.phrases_info.availability == AZ_AVAIL_EMPTY;
-}
-
 static void schedule_ready_plan(int i, const cues_config *config, const az_deck_snapshot *native, const az_native_cue_snapshot *existing)
 {
     struct deck_state *d = &decks[i];
     if (!d->cues_known)
         return;
     if (preserve_existing(i, existing)) return;
-    if (!d->manual_requested &&
-        !phrase_analysis_available(d))
-        return;
+    /* The evaluator waits for phrases only when a matching rule needs them.
+     * Absolute rules can run while phrase analysis is unavailable. */
     if (!filter_metadata_ready(config, &d->track.metadata)) {
         status(i, "waiting for rule filter metadata");
         return;
