@@ -1,23 +1,8 @@
 # Beatport Remember testing
 
-## 0.3.0 regression
-
-The 0.2.1 startup crash occurred while `tick` called
-`juce::TextEditor::setText` through a raw firmware address. The mod's tick
-runs on the AZ-MODS overlay thread, not EP147's JUCE message thread. The
-mod also retained raw controller/widget pointers without destruction
-tracking and set its saved flag before checking whether a file write
-succeeded.
-
-Version 0.3.0 uses the public core Beatport login service. The mod contains no
-firmware addresses, hooks, native object reads, password buffers or file I/O.
-The core handles native UI operations and persistence; its tests cover those
-operations separately. Mod tests alone cannot prove firmware behavior or a
-successful Beatport authentication.
-
 ## Automated checks
 
-Run from `az-mods/beatport-remember`:
+Run these checks from the Beatport Remember directory.
 
 ```sh
 make test
@@ -30,8 +15,8 @@ The focused tests compile the production mod into a test process and invoke
 its exported descriptor, page callbacks and tick against a mock SDK service.
 They cover:
 
-- Refusing an old core, an unavailable service, an incompatible/truncated
-  service table, missing methods and rejected configuration.
+- Checking compatibility with a larger append-only table and refusing an old
+  core, an incompatible or truncated table, missing methods, and rejected configuration.
 - Disabling automatic actions if menu registration fails.
 - Preserving default preferences and clamping legacy delay/attempt settings.
 - Applying switches to the service before persisting them, and leaving the
@@ -50,8 +35,8 @@ it does not access firmware or a real account.
 
 ## Physical-deck acceptance
 
-Use a core build that contains the service and the matching 0.3.0 mod. Verify
-these cases on supported firmware before publishing:
+Use a core build that contains the Beatport login service and a matching mod
+build. Verify these cases on supported firmware before publishing.
 
 1. Start with existing valid saved credentials. Confirm startup remains
    responsive beyond the automatic submission delay and the community-mod
@@ -72,22 +57,3 @@ these cases on supported firmware before publishing:
 7. With the user's own account, complete one authentication round trip:
    enter credentials → LOG IN → restart → automatic login → streaming track.
    A clean crash log or a returned dispatch call does not prove authentication.
-
-Old test notes for 0.1.x used synthetic credentials and did not establish a
-complete successful login round trip. Their no-crash observations do not
-validate the 0.3.0 service implementation; retain new evidence per build.
-
-On 2026-11-16, the 0.3.0 mod and updated core completed automatic login from the
-existing credential store after three native-player restarts on the physical
-deck. The core's visibility gate deferred autofill until the login screen was
-actually open. The native UI showed Beatport Connected, and authenticated catalog
-tracks loaded and played through SDK controls. The original credential file was
-preserved; capture of a changed login and Forget were not retested in this run.
-No crash trace appeared during acceptance. The preceding reported 1.2.9 outage
-had no surviving fault trace, so its cause remains undetermined.
-
-The compatibility fixture also accepts larger append-only ABI-v1 core/service
-tables and rejects missing, truncated or unknown services. This validates the mod's
-supported-prefix checks; future core and firmware implementations still need their
-own qualification. Evidence is retained in the parent workspace under
-`temp/physical-auto-20261116/`.

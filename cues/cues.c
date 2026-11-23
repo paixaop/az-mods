@@ -21,7 +21,8 @@
 /* All SDK calls and commands stay on UI. A worker only evaluates immutable,
  * bounded copies. Every callback context lives for the lifetime of the mod. */
 static const az_core_v1 *C;
-static const az_library_v1 *L;
+static const az_observation_v1 *O;
+static const az_commands_v1 *Q;
 static az_deck_subscription subscription;
 static az_surface *deck_button, *deck_picker;
 static int picker_open, picker_selected;
@@ -147,9 +148,9 @@ static void invalidate_plan(struct deck_state *d)
     d->plan_ready = 0;
     if (d->pending) {
         d->obsolete = 1;
-        if (AZ_LIB_HAS(L, command_cancel)) {
+        if (AZ_COMMANDS_HAS(Q, command_cancel)) {
             az_command_result out = { .size = sizeof out };
-            (void)L->command_cancel(CUES_ID, d->request, &out);
+            (void)Q->command_cancel(CUES_ID, d->request, &out);
         }
     }
 }
@@ -578,7 +579,7 @@ static void receive_terminal(int deck, struct deck_state *d, const az_command_co
     if (d->result.outcome == AZ_COMMAND_UNCERTAIN)
         d->uncertain_load = d->native_load;
     complete_plan(deck, d, completion);
-    int rc = L->command_acknowledge(CUES_ID, d->request);
+    int rc = Q->command_acknowledge(CUES_ID, d->request);
     if (rc == AZ_OK)
         d->acknowledge = 0;
 }
@@ -601,32 +602,16 @@ static void command_complete(const az_command_completion *completion,
         }
     }
 }
-static int native_cues_valid(const az_native_cue_snapshot *cues, int deck, uint64_t load)
-{
-    return cues->size >= sizeof *cues &&
-           cues->version == AZ_DATA_VERSION && cues->deck == (uint32_t)deck &&
-           cues->revision && cues->count <= AZ_NATIVE_CUE_LIMIT &&
-           cues->native_load_generation == load && cues->source_rate_hz &&
-           cues->source_rate_hz < 0x7fffffffu;
-}
-
 static int native_state(int deck, uint64_t now, az_deck_snapshot *s,
                         az_native_cue_snapshot *cues)
 {
-    struct deck_state *d = &decks[deck];
-    *s = (az_deck_snapshot){ .size = sizeof *s };
-    if (L->deck_snapshot(deck, s) != AZ_OK ||
-        !az_data_deck_header(s, (uint32_t)deck) ||
-        !(s->valid & AZ_LIVE_LOADED) || s->loaded != 1)
-        return 0;
-    uint64_t load;
-    /* A READY native loaded status names this same native generation. The
-     * legacy deck snapshot does not publish a library track association. */
-    if (!az_read_native_load_target(s, (uint32_t)deck, now, &load) ||
-        load != d->epoch)
-        return 0;
-    *cues = (az_native_cue_snapshot){ .size = sizeof *cues };
-    return L->native_cues(deck, cues) == AZ_OK && native_cues_valid(cues, deck, load);
+    (void)now;
+    az_command_target_v1 target = { .size = sizeof target };
+    if (O->command_target(deck, decks[deck].epoch, &target) != AZ_OK) return 0;
+    if (target.size < sizeof target || target.version != AZ_DATA_VERSION) return 0;
+    *s = target.deck;
+    *cues = target.cues;
+    return 1;
 }
 static int filter_text_ready(const cues_group *g, const az_track_metadata *meta)
 {
@@ -846,7 +831,7 @@ static void install_plan(struct deck_state *d, const struct plan_job *j)
 static void acknowledge_command(struct deck_state *d)
 {
     if (d->pending && d->acknowledge &&
-        L->command_acknowledge(CUES_ID, d->request) == AZ_OK)
+        Q->command_acknowledge(CUES_ID, d->request) == AZ_OK)
         d->acknowledge = 0;
 }
 
@@ -1012,7 +997,7 @@ static void submit_plan_point(int i, uint64_t clock, const az_native_cue_snapsho
     d->request = request.request_id;
     d->pending = 1;
     d->terminal = d->obsolete = d->acknowledge = 0;
-    int rc = L->command_submit_async(CUES_ID, &request, command_complete, d,
+    int rc = Q->command_submit_async(CUES_ID, &request, command_complete, d,
                                      &result);
     if (rc != AZ_OK) {
         d->pending = 0;
@@ -1099,7 +1084,7 @@ static void tick(void)
     if (!tick_due(clock)) return;
     const cues_config *config = cues_settings_config();
     az_data_capabilities caps = { .size = sizeof caps };
-    if (L->data_capabilities(&caps) != AZ_OK ||
+    if (O->data_capabilities(&caps) != AZ_OK ||
         (caps.commands & WRITE_COMMANDS) != WRITE_COMMANDS) {
         cues_settings_status("Waiting for SDK cue creation support");
         return;
@@ -1112,7 +1097,7 @@ static int surface_services_valid(const az_core_v1 *core)
 }
 static int core_services_valid(const az_core_v1 *core)
 {
-    if (!core || core->abi != AZ_MOD_ABI || !AZ_HAS(core, library_service) ||
+    if (!core || core->abi != AZ_MOD_ABI || !AZ_HAS(core, observation_service) || !AZ_HAS(core, command_service) ||
         !AZ_HAS(core, register_screen) || !AZ_HAS(core, thread_start) ||
         !AZ_HAS(core, confirm) || !surface_services_valid(core))
         return 0;
@@ -1121,11 +1106,11 @@ static int core_services_valid(const az_core_v1 *core)
 
 static int library_services_valid(void)
 {
-    if (!AZ_LIB_HAS(L, on_deck_status) || !AZ_LIB_HAS(L, deck_status_release) ||
-        !AZ_LIB_HAS(L, deck_snapshot) || !AZ_LIB_HAS(L, native_cues) ||
-        !AZ_LIB_HAS(L, data_capabilities) ||
-        !AZ_LIB_HAS(L, command_submit_async) ||
-        !AZ_LIB_HAS(L, command_acknowledge))
+    if (!AZ_OBSERVATION_HAS(O, on_deck_status) || !AZ_OBSERVATION_HAS(O, deck_status_release) ||
+        !AZ_OBSERVATION_HAS(O, command_target) ||
+        !AZ_OBSERVATION_HAS(O, data_capabilities) ||
+        !AZ_COMMANDS_HAS(Q, command_submit_async) ||
+        !AZ_COMMANDS_HAS(Q, command_acknowledge))
         return 0;
     return 1;
 }
@@ -1157,7 +1142,8 @@ static int init(const az_core_v1 *core)
 {
     if (!core_services_valid(core)) return -1;
     C = core;
-    L = core->library_service(AZ_LIBRARY_ABI);
+    O = core->observation_service(AZ_OBSERVATION_ABI);
+    Q = core->command_service(AZ_COMMANDS_ABI);
     if (!library_services_valid()) return -2;
     const az_screen_v1 *screen = cues_settings_init(core, config_changed);
     if (!screen || C->register_screen(CUES_ID, screen))
@@ -1170,7 +1156,7 @@ static int init(const az_core_v1 *core)
                                .deck_mask = AZ_STATUS_ALL_DECKS,
                                .position_hz = 1,
                                .topics = TOPICS };
-    if (L->on_deck_status(CUES_ID, &watch, deck_status, NULL, &subscription) !=
+    if (O->on_deck_status(CUES_ID, &watch, deck_status, NULL, &subscription) !=
         AZ_OK)
         return -5;
     cues_settings_status(cues_settings_config()->enabled

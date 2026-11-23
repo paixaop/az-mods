@@ -1,23 +1,18 @@
 /* SPDX-License-Identifier: GPL-3.0-only */
 #include "cues.h"
 #include "azmod-timestamps.h"
+#include "azmod-phrases.h"
 
 #include <ctype.h>
 #include <math.h>
 #include <stdio.h>
 #include <string.h>
 
-/* Raw PSSI mood/kind mapping follows Anchor. SDK category=0 deliberately does
- * not promise normalized labels. Unknown kinds still match the Any selector. */
+/* Unclassified phrases still match the Any selector; no unknown-mood policy
+ * is inferred from a kind number. */
 static int phrase_category(const az_phrase *p)
 {
-    static const unsigned char high[] = { 0, 1, 2, 3, 0, 4, 5 };
-    static const unsigned char other[] = { 0, 1, 6, 6, 6, 6, 6, 6, 7, 4, 5 };
-    if (p->raw_mood == 1) return p->raw_kind < sizeof high ? high[p->raw_kind] : 0;
-    if (p->raw_mood == 2 || p->raw_mood == 3)
-        return p->raw_kind < sizeof other ? other[p->raw_kind] : 0;
-    /* No mood means no trustworthy classification. */
-    return 0;
+    return (int)az_phrase_decode(p->raw_mood, p->raw_kind);
 }
 
 static int terminated(const char *s, size_t n) { return memchr(s, 0, n) != NULL; }

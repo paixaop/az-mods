@@ -214,24 +214,54 @@ static int register_screen(const char *id, const az_screen_v1 *s)
     assert(s == &screen);
     return 0;
 }
+static int get_target(int deck, uint64_t epoch, az_command_target_v1 *out)
+{
+    az_deck_snapshot snapshot = { .size = sizeof snapshot };
+    az_native_cue_snapshot cues = { .size = sizeof cues };
+    uint64_t load;
+    if (get_deck(deck, &snapshot) != AZ_OK || !(snapshot.valid & AZ_LIVE_LOADED) || snapshot.loaded != 1)
+        return AZ_PENDING;
+    if (!az_read_native_load_target(&snapshot, (uint32_t)deck, now_ns(), &load) || load != epoch)
+        return AZ_STALE;
+    if (get_cues(deck, &cues) != AZ_OK || cues.version != AZ_DATA_VERSION || cues.deck != (uint32_t)deck ||
+        cues.native_load_generation != load || !cues.revision || !cues.source_rate_hz ||
+        cues.source_rate_hz >= 0x7fffffffu || cues.count > AZ_NATIVE_CUE_LIMIT) return AZ_STALE;
+    *out = (az_command_target_v1){ .size = sizeof *out, .version = AZ_DATA_VERSION,
+                                 .commands = WRITE_COMMANDS, .deck = snapshot, .cues = cues };
+    return AZ_OK;
+}
 static az_library_v1 library = { .abi = AZ_LIBRARY_ABI,
                                  .size = sizeof library,
-                                 .data_capabilities = capabilities,
-                                 .deck_snapshot = get_deck,
-                                 .native_cues = get_cues,
-                                 .on_deck_status = watch,
-                                 .deck_status_release = release_watch,
-                                 .command_submit_async = submit,
-                                 .command_acknowledge = acknowledge,
-                                 .command_cancel = cancel };
+
+
+
+
+
+
+
+                                 };
+static az_observation_v1 library_observation = { .abi = AZ_OBSERVATION_ABI, .size = sizeof library_observation, .command_target = get_target, .data_capabilities = capabilities, .deck_snapshot = get_deck, .native_cues = get_cues, .on_deck_status = watch, .deck_status_release = release_watch };
+static az_commands_v1 library_commands = { .abi = AZ_COMMANDS_ABI, .size = sizeof library_commands, .command_submit_async = submit, .command_acknowledge = acknowledge, .command_cancel = cancel };
 static const az_library_v1 *service(uint32_t abi)
 {
     assert(abi == AZ_LIBRARY_ABI);
     return &library;
 }
+static const az_observation_v1 *service_observation(uint32_t abi)
+{
+    assert(abi == AZ_OBSERVATION_ABI);
+    return &library_observation;
+}
+
+static const az_commands_v1 *service_commands(uint32_t abi)
+{
+    assert(abi == AZ_COMMANDS_ABI);
+    return &library_commands;
+}
+
 static az_core_v1 core = { .abi = AZ_MOD_ABI,
                            .size = sizeof core,
-                           .library_service = service,
+                           .library_service = service, .observation_service = service_observation, .command_service = service_commands,
                            .thread_start = start_thread,
                            .register_screen = register_screen,
                            .confirm = ask,

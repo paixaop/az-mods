@@ -8,7 +8,7 @@
   "description": "Remembers your Beatport Streaming login through the public AZ-MODS login service, then fills and submits it on the next login screen. Requires AZ-MODS 1.2.8 or newer and supported firmware. The core keeps credentials on the deck in /home/root/settings/azmod-community, readable by root only. The mod never receives the password.",
   "license": "GPL-3.0-only",
   "source": "https://github.com/paixaop/az-mods/tree/main/beatport-remember",
-  "api": 1,
+  "api": 2,
   "firmware": [
     "any"
   ],

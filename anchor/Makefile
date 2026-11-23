@@ -13,7 +13,7 @@ SRCS            := anchor.c deck.c guide.c settings.c display.c
 AZ_SDK          ?= ../../az-mods-sdk
 AZ_SDK_INCLUDE  ?= $(AZ_SDK)/include
 HEADERS         := deck.h guide.h settings.h display.h mod.h \
-                   $(addprefix $(AZ_SDK_INCLUDE)/,azmod-mod.h azmod-data-helpers.h azmod-timestamps.h)
+                   $(addprefix $(AZ_SDK_INCLUDE)/,azmod-mod.h azmod-data-helpers.h azmod-timestamps.h azmod-phrases.h)
 MAX_REDRAWS     ?= 6
 SAN             ?= plain asan tsan
 TEST_CC         ?= clang

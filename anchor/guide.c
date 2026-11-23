@@ -4,6 +4,7 @@
  */
 #include "guide.h"
 #include "azmod-timestamps.h"
+#include "azmod-phrases.h"
 
 #include <math.h>
 #include <stdio.h>
@@ -84,15 +85,10 @@ static int grid_next(const an_analysis_t *a, uint32_t pos_ms, int bars, uint32_t
 
 int an_phrase_category(uint32_t mood, uint32_t kind)
 {
-    static const int high[] = { AN_CAT_OTHER, AN_CAT_INTRO, AN_CAT_BUILD, AN_CAT_BREAK,
-                                AN_CAT_OTHER, AN_CAT_CHORUS, AN_CAT_OUTRO, AN_CAT_OTHER, AN_CAT_OTHER, AN_CAT_OTHER, AN_CAT_OTHER };
-    static const int other[] = { AN_CAT_OTHER, AN_CAT_INTRO, AN_CAT_VERSE, AN_CAT_VERSE,
-                                 AN_CAT_VERSE, AN_CAT_VERSE, AN_CAT_VERSE, AN_CAT_VERSE, AN_CAT_BRIDGE, AN_CAT_CHORUS, AN_CAT_OUTRO };
     static const int unknown[] = { AN_CAT_OTHER, AN_CAT_INTRO, AN_CAT_OTHER, AN_CAT_OTHER,
                                    AN_CAT_OTHER, AN_CAT_CHORUS, AN_CAT_OUTRO, AN_CAT_OTHER, AN_CAT_BRIDGE, AN_CAT_CHORUS, AN_CAT_OUTRO };
-    if (kind >= sizeof high / sizeof high[0]) return AN_CAT_OTHER;
-    if (mood == 1) return high[kind];
-    return mood == 2 || mood == 3 ? other[kind] : unknown[kind];
+    if (mood >= 1 && mood <= 3) return (int)az_phrase_decode(mood, kind);
+    return kind < sizeof unknown / sizeof unknown[0] ? unknown[kind] : AN_CAT_OTHER;
 }
 
 const char *an_category_name(int category)

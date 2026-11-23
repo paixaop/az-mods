@@ -166,6 +166,11 @@ static void phrase_rules(void)
     r->phrase_type = 0;
     r->phrase_point = CUES_START;
     phrases[1].raw_mood = 0;
+    phrases[1].raw_kind = 5; /* Anchor deliberately classifies this as chorus. */
+    r->phrase_type = 4;
+    build();
+    assert(plan.count == 1); /* only the known-mood chorus */
+    r->phrase_type = 0;
     phrases[1].raw_kind = 99;
     build();
     assert(plan.count == 4); /* unknown phrase still matches Any */
