@@ -188,6 +188,19 @@ static int submit(const char *id, const az_command_request *r,
     callback_user = u;
     return AZ_OK;
 }
+static az_cue_batch_request submitted_batch;
+static int batch_rc, batch_attempts;
+static int submit_batch(const char *id, const az_cue_batch_request *r,
+                        az_command_completion_fn fn, void *u, az_command_result *out)
+{
+    (void)out;
+    assert(!strcmp(id, CUES_ID));
+    submitted_batch = *r;
+    ++batch_attempts;
+    callback = fn;
+    callback_user = u;
+    return batch_rc;
+}
 static int acknowledge(const char *id, uint64_t request)
 {
     (void)id;
@@ -573,6 +586,43 @@ static void confirmation_after_reload(void)
         callback(&c, callback_user);
         release(c);
     }
+}
+static void batch_submission(void)
+{
+    struct deck_state *d = &decks[0];
+    library_commands.cue_batch_submit_async = submit_batch;
+    *d = (struct deck_state){
+        .epoch = 50, .native_load = 51, .plan_epoch = 50, .plan_config = config_revision,
+        .plan_ready = 1, .plan = {.count = 2, .skipped = 1, .points = {
+            {.classification = AZ_CUE_HOT, .type = AZ_CUE_POINT, .slot = 1, .start_s = 2, .comment = "Start"},
+            {.classification = AZ_CUE_MEMORY, .type = AZ_CUE_LOOP, .start_s = 4, .end_s = 6}
+        }}
+    };
+    az_native_cue_snapshot existing = {.revision = 10, .source_rate_hz = 48000};
+    int before = submissions;
+    batch_rc = AZ_BUSY;
+    apply_plan(0, now_ns(), &existing);
+    assert(!d->pending && batch_attempts == 1 && submissions == before);
+    batch_rc = AZ_OK;
+    apply_plan(0, now_ns(), &existing);
+    assert(d->pending && batch_attempts == 2 && submissions == before);
+    assert(submitted_batch.count == 2 && submitted_batch.mode == AZ_CUE_BATCH_IF_EMPTY);
+    assert(submitted_batch.expected_load_generation == 51 && submitted_batch.expected_revision == 10);
+    assert(submitted_batch.entries[0].slot == 1 && !strcmp(submitted_batch.entries[0].comment, "Start"));
+    assert(submitted_batch.entries[1].type == AZ_CUE_LOOP);
+    az_command_completion done = {
+        .size = sizeof done, .version = AZ_DATA_VERSION, .kind = AZ_COMMAND_COMPLETION_TERMINAL, .settled = 1,
+        .result = {.size = sizeof done.result, .version = AZ_DATA_VERSION, .outcome = AZ_COMMAND_APPLIED,
+                   .request_id = submitted_batch.request_id, .revision = 11, .observed_ns = now_ns()}
+    };
+    callback(&done, callback_user);
+    release(done);
+    assert(!d->pending && !d->plan_ready && d->saved == 2 && strstr(shown, "saved 2, skipped 1"));
+    d->plan_ready = d->plan_manual = d->confirmed = 1;
+    batch_rc = AZ_UNSUPPORTED;
+    apply_plan(0, now_ns(), &existing);
+    assert(batch_attempts == 3 && submissions == before + 1);
+    assert(submitted_batch.mode == AZ_CUE_BATCH_REPLACE && !d->batch_pending);
 }
 int main(void)
 {
@@ -1032,6 +1082,7 @@ int main(void)
     analysis_receipts();
     absolute_without_phrases();
     confirmation_after_reload();
+    batch_submission();
     puts(
         "Runtime passed: public SDK commands, native load fences, source rate, "
         "async cleanup, cache lag, disable and uncertainty");
