@@ -29,5 +29,7 @@ enum {
 const az_screen_v1 *settings_init(const az_core_v1 *core, void (*on_change)(void));
 int settings_get(int key);
 void settings_set(int key, int value);
+const char *settings_key(int index);
+int settings_choices(int index);
 
 #endif

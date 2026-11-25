@@ -85,7 +85,7 @@ int main(int argc, char **argv)
     if (argc < 5) {
         fprintf(stderr,
                 "usage: %s out.json width height "
-                "groups|group|phrase|absolute|all-pads|memory-pad|global|files|keyboard [day]\n",
+                "groups|group|rules|phrase|absolute|all-pads|memory-pad|choices|global|files|help|keyboard [day]\n",
                 argv[0]);
         return 2;
     }
@@ -120,27 +120,46 @@ int main(int argc, char **argv)
     snprintf(runtime_status, sizeof runtime_status,
              "Track load: waits for phrases; skips tracks with cues");
     const char *mode = argv[4];
+    cues_group *g = &config.groups[0];
     if (!strcmp(mode, "group"))
         view = GROUP;
-    else if (!strcmp(mode, "phrase")) {
-        view = RULE;
-        page = 1;
+    else if (!strcmp(mode, "rules")) {
+        view = RULES;
+        g->rules[0].anchor = CUES_ABSOLUTE;
+        g->rules[0].unit = CUES_SECONDS;
+        g->rules[0].color = CUES_COLOR_BY_PAD;
+        snprintf(g->rules[0].name, sizeof g->rules[0].name, "Track start");
+        g->rules[1].phrase_type = 4;
+        g->rules[1].offset = -16;
+        g->rules[1].loop_mode = CUES_LOOP_TO_END;
+    } else if (!strcmp(mode, "phrase")) {
+        g->rules[0].phrase_type = 4;
+        g->rules[0].phrase_index = 2;
+        g->rules[0].offset = -16;
+        g->rules[0].loop_mode = CUES_LOOP_TO_END;
+        open_rule(g, 0);
     } else if (!strcmp(mode, "all-pads") || !strcmp(mode, "memory-pad")) {
-        view = RULE;
-        config.groups[0].rules[0].phrase_type = 4;
-        config.groups[0].rules[0].phrase_index = 0;
+        g->rules[0].phrase_type = 4;
+        g->rules[0].phrase_index = 0;
         if (!strcmp(mode, "memory-pad"))
-            config.groups[0].rules[0].cue_type = AZ_CUE_MEMORY;
+            g->rules[0].cue_type = AZ_CUE_MEMORY;
+        open_rule(g, 0);
     } else if (!strcmp(mode, "absolute")) {
-        view = RULE;
-        config.groups[0].rules[0].anchor = CUES_ABSOLUTE;
-        config.groups[0].rules[0].cue_type = AZ_CUE_MEMORY;
-        config.groups[0].rules[0].position = 32;
-        page = 1;
+        g->rules[0].anchor = CUES_ABSOLUTE;
+        g->rules[0].cue_type = AZ_CUE_MEMORY;
+        g->rules[0].position = 32;
+        open_rule(g, 0);
+    } else if (!strcmp(mode, "choices")) {
+        open_rule(g, 0);
+        rebuild();
+        for (int i = 0; i < field_count; i++)
+            if (fields[i].value == &rule_edit.color) change_field(i);
     } else if (!strcmp(mode, "global"))
         view = GLOBAL;
     else if (!strcmp(mode, "files"))
         view = FILES;
+    else if (!strcmp(mode, "help"))
+        open_help();
     else if (!strcmp(mode, "keyboard")) {
         view = GROUP;
         rebuild();

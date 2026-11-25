@@ -4,7 +4,9 @@
   "paths": [
     "anchor/",
     "beatport-remember/",
-    "cues/"
+    "cues/",
+    "deck-mcp/",
+    "set-planner/"
   ],
   "exclude": [
     "*/tests/*",

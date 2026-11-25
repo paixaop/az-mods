@@ -51,6 +51,13 @@ NO_OUTLINE_ATOMICS := $(shell printf 'int main(void){return 0;}\n' | \
     $(CC) -mno-outline-atomics -x c -o /dev/null - 2>/dev/null && echo -mno-outline-atomics)
 CFLAGS += $(NO_OUTLINE_ATOMICS)
 
+ifneq ($(MCP_PROVIDER_DIR),)
+CMCP ?= /deps/cmcp
+SRCS += $(addprefix $(MCP_PROVIDER_DIR)/,provider.c client-wire.c wire.c) $(CMCP)/src/json.c
+CFLAGS += -D_GNU_SOURCE -DBEATPORT_MCP -I$(MCP_PROVIDER_DIR) -I$(CMCP)/include
+LDLIBS += -pthread -lm
+endif
+
 ifeq ($(strip $(DEBUG)),1)
 CFLAGS   += -g
 endif
@@ -78,3 +85,10 @@ test-harness:
 
 clean:
 	rm -rf $(OUT)
+
+.PHONY: mcp-unit
+mcp-unit: | $(OUT)
+	$(TEST_CC) -std=c11 -D_GNU_SOURCE -O1 -g -I. -I$(AZ_SDK_INCLUDE) $(UNIT_SAN_FLAGS) \
+		-I$(MCP_PROVIDER_DIR) -I$(CMCP)/include -o $(OUT)/test_beatport_mcp \
+		tests/test_mcp.c $(MCP_PROVIDER_DIR)/wire.c $(CMCP)/src/json.c -lm
+	$(OUT)/test_beatport_mcp

@@ -69,9 +69,11 @@ int cues_config_validate(const cues_config *config, char *error, size_t size);
 int cues_config_parse(cues_config *config, const char *json, size_t length,
                       char *error, size_t size);
 int cues_config_json(const cues_config *config, char *json, size_t capacity);
+void cues_rule_sentence(const cues_rule *rule, char *out, size_t size);
 extern const uint32_t cues_colors[CUES_COLOR_BY_PAD];
 extern const char *const cues_color_names[CUES_COLOR_COUNT];
 extern const char *const cues_phrase_names[8];
+extern const char *const cues_occurrences[11];
 /* Pure evaluator. Actual source sample rate is mandatory. Existing native cues
  * are preserved; no command seeks or edits working/retained playback state. */
 int cues_build_plan(const cues_config *config, const az_track_snapshot *track,
@@ -85,4 +87,20 @@ const cues_config *cues_settings_config(void);
 void cues_settings_status(const char *status);
 /* Drives bounded handoff of persistence completions, never file IO on UI. */
 void cues_settings_tick(void);
+/* Overlay-thread handoff for external configuration editors. A validated
+ * candidate is committed only if the applied revision and editor still match. */
+typedef struct {
+    unsigned active, saved, saving, failed;
+    int queued, available;
+} cues_revisions;
+void cues_settings_revisions(cues_revisions *revisions);
+int cues_settings_remote_apply(const cues_config *validated, unsigned expected);
+int cues_settings_remote_save(unsigned expected);
+#ifdef CUES_MCP
+int cues_mcp_init(const az_core_v1 *core);
+void cues_mcp_tick(void);
+int cues_mcp_apply_track(int deck, uint64_t load, unsigned revision);
+int cues_mcp_request_preview(int deck, uint64_t load, unsigned revision, uint64_t call);
+void cues_mcp_preview_complete(uint64_t call, int status, const cues_plan *plan);
+#endif
 #endif

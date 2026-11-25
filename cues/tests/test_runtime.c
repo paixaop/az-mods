@@ -19,6 +19,7 @@ static int submissions, acknowledgements, cancellations, threads, refusals;
 static int acknowledge_busy, phrase_available = 1, confirmations,
                              planned_count = 2;
 static int planning_status = AZ_OK;
+static uint64_t advertised_commands = WRITE_COMMANDS;
 static int production_planner, tempo_available;
 static void (*confirm_callback)(int, void *);
 static void *confirm_user;
@@ -105,6 +106,30 @@ void cues_settings_status(const char *text)
     snprintf(shown, sizeof shown, "%s", text);
 }
 void cues_settings_tick(void) {}
+#ifdef CUES_MCP
+static uint64_t preview_call;
+static int preview_status, preview_count;
+static int providers_started;
+
+int cues_mcp_init(const az_core_v1 *core)
+{
+    assert(core == C);
+    ++providers_started;
+    return AZ_OK;
+}
+void cues_mcp_tick(void) {}
+void cues_settings_revisions(cues_revisions *revisions)
+{
+    *revisions = (cues_revisions){ .active = config_revision };
+}
+void cues_mcp_preview_complete(uint64_t call, int status, const cues_plan *plan)
+{
+    assert((status == AZ_OK) == (plan != NULL));
+    preview_call = call;
+    preview_status = status;
+    preview_count = plan ? plan->count : 0;
+}
+#endif
 static int fixture_build_plan(const cues_config *c, const az_track_snapshot *track,
                     const az_native_cue_snapshot *existing, uint32_t rate,
                     cues_plan *out)
@@ -149,7 +174,7 @@ static int get_cues(int deck, az_native_cue_snapshot *out)
 static int capabilities(az_data_capabilities *out)
 {
     out->version = AZ_DATA_VERSION;
-    out->commands = WRITE_COMMANDS;
+    out->commands = advertised_commands;
     return AZ_OK;
 }
 static int watch(const char *id, const az_deck_watch_v1 *w,
@@ -507,6 +532,30 @@ static void analysis_receipts(void)
     deliver(44100, 27, 1);
     assert(d->track.beat_count == 2 && d->grid_revision == 8 && d->track.phrase_count == 1);
 }
+#ifdef CUES_MCP
+static void remote_preview(void)
+{
+    assert(cues_mcp_request_preview(1, 28, config_revision, 1) == AZ_STALE);
+    assert(cues_mcp_request_preview(0, 28, config_revision + 1, 1) == AZ_STALE);
+    ++bank.native_load_generation;
+    assert(cues_mcp_request_preview(0, 28, config_revision, 1) == AZ_BUSY);
+    --bank.native_load_generation;
+    assert(cues_mcp_request_preview(0, 28, config_revision, 2) == AZ_PENDING);
+    assert(cues_mcp_request_preview(0, 28, config_revision, 3) == AZ_BUSY);
+    assert(worker_step());
+    receive_plan_job(0);
+    assert(preview_call == 2 && preview_status == AZ_OK && preview_count == 1);
+    assert(!submissions && !decks[0].plan_ready && !atomic_load(&jobs[0].phase));
+
+    assert(cues_mcp_request_preview(0, 28, config_revision, 4) == AZ_PENDING);
+    assert(worker_step());
+    config_changed();
+    receive_plan_job(0);
+    assert(preview_call == 4 && preview_status == AZ_STALE && !preview_count);
+    assert(!submissions && !decks[0].plan_ready && !atomic_load(&jobs[0].phase));
+}
+#endif
+
 static void absolute_without_phrases(void)
 {
     cues_config_default(&config);
@@ -525,6 +574,9 @@ static void absolute_without_phrases(void)
     bank.count = 0;
     live.native_load_generation = bank.native_load_generation = 28;
     deliver(44100, 28, 1);
+#ifdef CUES_MCP
+    remote_preview();
+#endif
     step();
     assert(atomic_load(&jobs[0].phase) == 1);
     assert(worker_step());
@@ -650,12 +702,20 @@ int main(void)
                                      .revision = 100,
                                      .source_rate_hz = 48000 };
     assert(init(&core) == 0 && threads == 1 && listener);
+#ifdef CUES_MCP
+    assert(providers_started == 1);
+#endif
     deliver(0, 15, 1);
     step();
     assert(!submissions && !atomic_load(&jobs[0].phase));
     phrase_available = 0;
     planning_status = AZ_PENDING;
     deliver(48000, 15, 1);
+    advertised_commands = 0;
+    step();
+    assert(!atomic_load(&jobs[0].phase) && !submissions);
+    assert(!strcmp(shown, "Waiting for loaded tracks"));
+    advertised_commands = WRITE_COMMANDS;
     step();
     assert(worker_step());
     step();

@@ -399,7 +399,11 @@ static void stable_playing_roles(void)
 int main(void)
 {
     const az_mod_v1 *mod = az_mod_v1_entry();
+#ifdef ANCHOR_MCP
+    assert(mod->tick && !mod->on_frame);
+#else
     assert(!mod->tick && !mod->on_frame);
+#endif
     az_core_v1 no_status = core;
     no_status.observation_service = NULL;
     assert(mod->init(&no_status) != AZ_OK);
@@ -540,4 +544,5 @@ int main(void)
     stable_playing_roles();
 
     puts("Deck events passed: load epochs, prepared loops, EXIT timing, borrowed maps, cue edits and resync");
+    return 0;
 }

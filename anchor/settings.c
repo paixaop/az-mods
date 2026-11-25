@@ -90,6 +90,17 @@ int settings_get(int key)
     if (key < 0 || key >= SET_COUNT) return 0;
     return values[key];
 }
+const char *settings_key(int index)
+{
+    return index >= 0 && index < SET_COUNT ? KEYS[index] : NULL;
+}
+int settings_choices(int index)
+{
+    if (index < 0 || index >= SET_COUNT)
+        return 0;
+    return DESC[index].n ? DESC[index].n : 2;
+}
+
 static int setting_value(int key, int value)
 {
     int v = value;

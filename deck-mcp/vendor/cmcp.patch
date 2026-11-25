@@ -1,0 +1,19 @@
+--- a/src/json.c
++++ b/src/json.c
+@@ -738,7 +738,15 @@
+         skip_ws(p);
+         cmcp_json_t *child = parse_value(p);
+         if (!child) { free(key); cmcp_json_free(obj); p->depth--; return NULL; }
+-        if (cmcp_json_object_set_n(obj, key, key_len, child) < 0) {
++        int duplicate = 0;
++        for (size_t k = 0; k < obj->obj.len; k++) {
++            if (obj->obj.key_lens[k] == key_len &&
++                memcmp(obj->obj.keys[k], key, key_len) == 0) {
++                duplicate = 1;
++                break;
++            }
++        }
++        if (duplicate || cmcp_json_object_set_n(obj, key, key_len, child) < 0) {
+             free(key); cmcp_json_free(child); cmcp_json_free(obj);
+             p->depth--;
+             return NULL;

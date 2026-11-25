@@ -21,7 +21,7 @@
                 "artist": "",
                 "key": ""
             },
-            "quantization": "Off",
+            "quantization": "Inherit",
             "bpmRange": {
                 "min": 0,
                 "max": 0

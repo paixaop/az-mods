@@ -4,6 +4,9 @@
  * This mod never receives the password and does no filesystem I/O.
  */
 #include "azmod-mod.h"
+#ifdef BEATPORT_MCP
+#include "wire.h"
+#endif
 
 #include <stddef.h>
 #include <stdio.h>
@@ -229,6 +232,108 @@ static int core_features_ready(void)
     return AZ_HAS(C, beatport_login_service) && AZ_HAS(C, register_row) && AZ_HAS(C, register_screen);
 }
 
+#ifdef BEATPORT_MCP
+static az_mcp_provider *mcp_provider;
+
+static void mcp_int(cmcp_json_t *out, const char *key, int value)
+{
+    az_mcp_set(out, key, cmcp_json_new_int(value));
+}
+
+static int mcp_status(const cmcp_json_t *args, uint64_t call, uint64_t deadline,
+                      cmcp_json_t **out, void *user)
+{
+    (void)args;
+    (void)call;
+    (void)deadline;
+    (void)user;
+    refresh_status();
+    if (!status_available)
+        return AZ_FAILED;
+    *out = cmcp_json_new_object();
+    az_mcp_set(*out, "haveCredentials", cmcp_json_new_bool(login_status.have_credentials));
+    az_mcp_set(*out, "savePending", cmcp_json_new_bool(login_status.save_pending));
+    mcp_int(*out, "storageError", login_status.storage_error);
+    mcp_int(*out, "autoLogin", options.auto_login);
+    mcp_int(*out, "remember", options.remember);
+    mcp_int(*out, "delaySeconds", options.delay_sec);
+    mcp_int(*out, "attempts", options.max_attempts);
+    return AZ_OK;
+}
+
+static void apply_option(const cmcp_json_t *args, const char *key, int *value)
+{
+    const cmcp_json_t *node = cmcp_json_object_get(args, key);
+    if (node && node->type == CMCP_JSON_INT)
+        *value = (int)node->i;
+}
+
+static int mcp_options(const cmcp_json_t *args, uint64_t call, uint64_t deadline,
+                       cmcp_json_t **out, void *user)
+{
+    az_beatport_login_options next = options;
+    apply_option(args, "autoLogin", &next.auto_login);
+    apply_option(args, "remember", &next.remember);
+    apply_option(args, "delaySeconds", &next.delay_sec);
+    apply_option(args, "attempts", &next.max_attempts);
+    if (login_service->configure(MOD_ID, &next))
+        return AZ_FAILED;
+    options = next;
+    C->cfg_set(MOD_ID, "auto-login", options.auto_login);
+    C->cfg_set(MOD_ID, "remember", options.remember);
+    C->cfg_set(MOD_ID, "delay-sec", options.delay_sec);
+    C->cfg_set(MOD_ID, "attempts", options.max_attempts);
+    action_error = NULL;
+    redraw();
+    return mcp_status(args, call, deadline, out, user);
+}
+
+static void mcp_confirm_forget(int yes, void *user)
+{
+    (void)user;
+    if (!yes)
+        return;
+    action_error = login_service->forget(MOD_ID) ? "Could not forget saved login." : NULL;
+    refresh_status();
+    redraw();
+}
+
+static int mcp_forget(const cmcp_json_t *args, uint64_t call, uint64_t deadline,
+                      cmcp_json_t **out, void *user)
+{
+    (void)args;
+    (void)call;
+    (void)deadline;
+    (void)user;
+    if (!AZ_HAS(C, confirm) || C->confirm(MOD_ID, "Forget Beatport login?",
+            "Delete the Beatport login saved on this deck?", "Forget", mcp_confirm_forget, NULL))
+        return AZ_BUSY;
+    *out = cmcp_json_parse_cstr("{\"confirmationRequested\":true}");
+    return *out ? AZ_OK : AZ_FAILED;
+}
+
+static void register_mcp(void)
+{
+    static const az_mcp_tool_v1 tools[] = {
+        { .size = sizeof(az_mcp_tool_v1), .name = "status", .description = "Read saved login status and options.",
+          .input_schema = "{\"type\":\"object\",\"additionalProperties\":false}", .invoke = mcp_status },
+        { .size = sizeof(az_mcp_tool_v1), .name = "set_options", .description = "Change saved login options.",
+          .input_schema = "{\"type\":\"object\",\"properties\":{\"key\":{\"type\":\"string\"},"
+            "\"autoLogin\":{\"type\":\"integer\",\"minimum\":0,\"maximum\":1},"
+            "\"remember\":{\"type\":\"integer\",\"minimum\":0,\"maximum\":1},"
+            "\"delaySeconds\":{\"type\":\"integer\",\"minimum\":0,\"maximum\":600},"
+            "\"attempts\":{\"type\":\"integer\",\"minimum\":1,\"maximum\":4}},"
+            "\"required\":[\"key\"],\"additionalProperties\":false}", .grant = AZ_MCP_SAVED, .invoke = mcp_options },
+        { .size = sizeof(az_mcp_tool_v1), .name = "forget", .description = "Ask on the deck before deleting the saved login.",
+          .input_schema = "{\"type\":\"object\",\"properties\":{\"key\":{\"type\":\"string\"}},"
+                          "\"required\":[\"key\"],\"additionalProperties\":false}",
+          .grant = AZ_MCP_SAVED, .invoke = mcp_forget }
+    };
+    if (az_mcp_register_tools(C, MOD_ID, tools, sizeof tools / sizeof tools[0], &mcp_provider) != AZ_OK)
+        C->log(MOD_ID, "MCP provider startup failed");
+}
+#endif
+
 static int init(const az_core_v1 *core)
 {
     static const az_row_v1 row = {
@@ -261,11 +366,17 @@ static int init(const az_core_v1 *core)
     refresh_status();
     C->log(MOD_ID, "loaded (auto=%d remember=%d, login delay=%d s, attempts=%d)",
            options.auto_login, options.remember, options.delay_sec, options.max_attempts);
+#ifdef BEATPORT_MCP
+    register_mcp();
+#endif
     return 0;
 }
 
 static void tick(void)
 {
+#ifdef BEATPORT_MCP
+    az_mcp_provider_tick(mcp_provider);
+#endif
     /* The overlay runs at up to ~30 Hz. Limit status redraws to <4 per second;
      * no firmware UI access or persistence work runs in this callback. */
     if (++status_ticks < 8) return;
