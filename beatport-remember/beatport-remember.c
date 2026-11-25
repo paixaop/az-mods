@@ -229,7 +229,7 @@ static void load_options(void)
 
 static int core_features_ready(void)
 {
-    return AZ_HAS(C, beatport_login_service) && AZ_HAS(C, register_row) && AZ_HAS(C, register_screen);
+    return AZ_HAS(C, beatport_login_service) && AZ_HAS(C, register_screen);
 }
 
 #ifdef BEATPORT_MCP
@@ -336,9 +336,6 @@ static void register_mcp(void)
 
 static int init(const az_core_v1 *core)
 {
-    static const az_row_v1 row = {
-        .size = sizeof(az_row_v1), .key = "menu", .label = "Beatport Remember", .kind = AZ_ROW_SCREEN, .help = "Saved Beatport login, auto login and forget", .screen = &PAGE
-    };
     if (!core || core->abi != AZ_MOD_ABI) return 1;
     C = core;
     if (!core_features_ready()) {
@@ -355,10 +352,10 @@ static int init(const az_core_v1 *core)
         C->log(MOD_ID, "Beatport login service could not be configured");
         return 4;
     }
-    if (C->register_screen(MOD_ID, &PAGE) != 0 || C->register_row(MOD_ID, &row) < 0) {
+    if (C->register_screen(MOD_ID, &PAGE) != 0) {
         options.auto_login = options.remember = 0;
         login_service->configure(MOD_ID, &options);
-        C->log(MOD_ID, "could not register the Beatport Remember menu page");
+        C->log(MOD_ID, "could not register the Beatport Remember settings page");
         return 5;
     }
     action_error = NULL;

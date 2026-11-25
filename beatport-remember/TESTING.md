@@ -17,7 +17,8 @@ They cover:
 
 - Checking compatibility with a larger append-only table and refusing an old
   core, an incompatible or truncated table, missing methods, and rejected configuration.
-- Disabling automatic actions if menu registration fails.
+- Registering the Community Mods settings page without adding a main Mod Menu row.
+- Disabling automatic actions if settings registration fails.
 - Preserving default preferences and clamping legacy delay/attempt settings.
 - Applying switches to the service before persisting them, and leaving the
   previous preference intact when the service refuses the change.

@@ -11,7 +11,7 @@ submits the login screen the next time it opens. Version 0.3.0 requires
    With **Remember a login typed on the deck** enabled, pressing **LOG IN**
    captures a complete username/password pair. This remembers the values you
    submitted; it does not prove that Beatport accepted them.
-2. Open **Mod Menu → Beatport Remember** to
+2. Open **Mod Menu → Community Mods → Installed → Beatport Remember → Settings** to
    check the result. **Updating saved login...** means storage work is still
    pending. **Saved login: ...** appears only for a pair committed to storage.
    A storage failure is shown on this page.
