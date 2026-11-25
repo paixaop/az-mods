@@ -10,7 +10,7 @@ struct az_draw { int unused; };
 static az_beatport_login_status published;
 static az_beatport_login_options configured;
 static int configure_calls, configure_result, status_result, forget_calls, forget_result;
-static int row_result, registered, cfg_writes, redraw_count;
+static int screen_result, screen_registrations, cfg_writes, redraw_count;
 static int cfg_auto = 1, cfg_remember = 1, cfg_delay = 45, cfg_attempts = 1;
 static const az_screen_v1 *screen;
 static char last_log[256], drawn[1024];
@@ -74,20 +74,20 @@ static void set_cfg(const char *id, const char *key, int value)
     else assert(!"unexpected setting write");
     cfg_writes++;
 }
-static int register_row(const char *id, const az_row_v1 *row)
+static int unexpected_register_row(const char *id, const az_row_v1 *row)
 {
-    assert(!strcmp(id, MOD_ID));
-    assert(row->kind == AZ_ROW_SCREEN && row->screen);
-    registered++;
-    screen = row->screen;
-    return row_result;
+    (void)id;
+    (void)row;
+    assert(!"Beatport Remember must not add a main menu row");
+    return -1;
 }
 static int row_height(az_draw *d) { (void)d; return 40; }
 static int register_screen(const char *id, const az_screen_v1 *page)
 {
     assert(!strcmp(id, MOD_ID) && page == &PAGE && !page->flags);
-    screen = page;
-    return 0;
+    screen_registrations++;
+    if (!screen_result) screen = page;
+    return screen_result;
 }
 static int text_width(const char *s, int px) { return (int)strlen(s) * px / 2; }
 static uint32_t color(int role) { return (uint32_t)role; }
@@ -126,7 +126,8 @@ int main(void)
         .configure=configure, .status=status, .forget=forget };
     published.size = sizeof(published);
     az_core_v1 core = {.abi=AZ_MOD_ABI, .size=sizeof(core), .log=log_line,
-        .cfg_get=get_cfg, .cfg_set=set_cfg, .register_row=register_row, .register_screen=register_screen,
+        .cfg_get=get_cfg, .cfg_set=set_cfg, .register_row=unexpected_register_row,
+        .register_screen=register_screen,
         .beatport_login_service=get_service, .request_redraw=request_redraw,
         .row_height=row_height, .text_width=text_width, .color=color,
         .draw_text=draw_text, .draw_header=draw_header, .draw_checkbox=draw_checkbox,
@@ -136,7 +137,7 @@ int main(void)
     assert(mod->on_frame == NULL);
     assert(mod->init(NULL) != 0);
     core.size = offsetof(az_core_v1, beatport_login_service);
-    assert(mod->init(&core) != 0 && configure_calls == 0 && registered == 0);
+    assert(mod->init(&core) != 0 && configure_calls == 0 && screen_registrations == 0);
     assert(strstr(last_log, "1.2.8"));
     core.size = sizeof(core);
     service_available = 0;
@@ -153,15 +154,19 @@ int main(void)
     assert(mod->init(&core) != 0 && configure_calls == 0);
     service.forget = forget;
     configure_result = -1;
-    assert(mod->init(&core) != 0 && registered == 0);
+    assert(mod->init(&core) != 0 && screen_registrations == 0);
     configure_result = 0;
-    row_result = -1;
+    screen_result = -1;
     assert(mod->init(&core) != 0);
-    assert(!configured.auto_login && !configured.remember); /* inactive without a menu */
-    row_result = 0;
+    assert(screen_registrations == 1 && !screen);
+    assert(!configured.auto_login && !configured.remember); /* inactive without settings */
+    screen_result = 0;
 
+    core.register_row = NULL;
     cfg_delay = -3; cfg_attempts = 17;
     assert(mod->init(&core) == 0);
+    assert(screen_registrations == 2 && screen == &PAGE);
+    core.register_row = unexpected_register_row;
     assert(configured.auto_login && configured.remember);
     assert(configured.delay_sec == 0 && configured.max_attempts == 4);
     cfg_delay = 999; cfg_attempts = 0;
