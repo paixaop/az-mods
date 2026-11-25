@@ -18,6 +18,14 @@ LDLIBS := -lm -lpthread
 NO_OUTLINE_ATOMICS := $(shell printf 'int main(void){return 0;}\n' | $(CC) -mno-outline-atomics -x c -o /dev/null - 2>/dev/null && echo -mno-outline-atomics)
 CFLAGS += $(NO_OUTLINE_ATOMICS)
 HEADERS := cues.h store.h $(addprefix $(AZ_SDK_INCLUDE)/,azmod-mod.h azmod-data-helpers.h azmod-timestamps.h azmod-phrases.h)
+# The standalone SDK build remains usable. Release builds with provider
+# support mount the companion SDK and the pinned cMCP source.
+ifneq ($(MCP_PROVIDER_DIR),)
+CMCP ?= /deps/cmcp
+SRCS += mcp.c $(addprefix $(MCP_PROVIDER_DIR)/,provider.c client-wire.c wire.c) $(CMCP)/src/json.c
+CFLAGS += -DCUES_MCP -I$(MCP_PROVIDER_DIR) -I$(CMCP)/include
+HEADERS += $(addprefix $(MCP_PROVIDER_DIR)/,az-mcp-provider.h client-wire.h wire.h)
+endif
 HOST_FLAGS := -std=c11 -O1 -g -Wall -Wextra -Werror -D_GNU_SOURCE -I. -I$(AZ_SDK_INCLUDE) $(UNIT_SAN_FLAGS)
 .PHONY: all unit test clean
 all: $(OUT)/$(MOD_ID).so
@@ -50,3 +58,13 @@ test:
 	    $(MOD_ID):4:cues.c,config.c,settings.c,store.c,plan.c
 clean:
 	rm -rf $(OUT)
+
+.PHONY: mcp-unit
+mcp-unit: | $(OUT)
+	$(TEST_CC) $(HOST_FLAGS) -DCUES_MCP -o $(OUT)/test_mcp_runtime tests/test_runtime.c plan.c config.c -lm
+	$(OUT)/test_mcp_runtime
+	$(TEST_CC) $(HOST_FLAGS) -DCUES_MCP -I$(MCP_PROVIDER_DIR) -I$(CMCP)/include \
+		-o $(OUT)/test_cues_mcp tests/test_mcp.c config.c $(MCP_PROVIDER_DIR)/wire.c $(CMCP)/src/json.c -lm
+	$(OUT)/test_cues_mcp
+	$(TEST_CC) $(HOST_FLAGS) -o $(OUT)/test_mcp_settings tests/test_mcp_settings.c config.c -lm
+	$(OUT)/test_mcp_settings

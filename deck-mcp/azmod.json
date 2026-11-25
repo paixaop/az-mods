@@ -1,0 +1,16 @@
+{
+  "azmod": 1,
+  "id": "deck-mcp",
+  "name": "Deck MCP",
+  "version": "0.5.0",
+  "author": "pedro",
+  "summary": "Control cues and loops, read deck data, and use approved community mod tools over HTTPS.",
+  "description": "An in-process MCP Streamable HTTP endpoint for the four logical decks. First run creates the TLS identity and bearer token. Find the connection details in Settings. Live control requires local arming.",
+  "license": "GPL-3.0-only",
+  "source": "https://github.com/paixaop/az-mods/tree/main/deck-mcp",
+  "category": "tools",
+  "api": 2,
+  "firmware": ["any"],
+  "hooks": false,
+  "min_core": "1.2.6"
+}

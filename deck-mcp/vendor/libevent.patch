@@ -1,0 +1,26 @@
+--- a/http.c
++++ b/http.c
+@@ -4411,6 +4411,11 @@
+ 	/* we need a connection object to put the http request on */
+ 	if (http->bevcb != NULL) {
+ 		bev = (*http->bevcb)(http->base, http->bevcbarg);
++		if (!bev) {
++			mm_free(hostname);
++			mm_free(portname);
++			return (NULL);
++		}
+ 	}
+ 	evcon = evhttp_connection_base_bufferevent_new(
+ 		http->base, NULL, bev, hostname, atoi(portname));
+@@ -4489,8 +4494,9 @@
+ 
+ 	evcon = evhttp_get_request_connection(http, fd, sa, salen);
+ 	if (evcon == NULL) {
+-		event_sock_warn(fd, "%s: cannot get connection on "EV_SOCK_FMT,
+-		    __func__, EV_SOCK_ARG(fd));
++		if (http->bevcb == NULL)
++			event_sock_warn(fd, "%s: cannot get connection on "EV_SOCK_FMT,
++			    __func__, EV_SOCK_ARG(fd));
+ 		evutil_closesocket(fd);
+ 		return;
+ 	}

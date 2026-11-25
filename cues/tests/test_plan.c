@@ -396,6 +396,7 @@ static void default_rules_file(void)
     assert(cues_config_parse(&config, json, n, error, sizeof error));
     assert(config.enabled && config.consolidate_phrases);
     assert(config.group_count == 1 && config.groups[0].rule_count == 4);
+    assert(config.quantization == CUES_QUANT_OFF && config.groups[0].quantization == CUES_INHERIT);
     assert(!config.groups[0].artist[0] && !config.groups[0].key[0]);
     /* Three-beat bars and a tempo change catch offsets that assume 4/4 or fixed BPM. */
     static az_beat grid[433];

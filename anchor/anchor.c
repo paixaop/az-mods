@@ -632,15 +632,20 @@ static void open_b_selector(int kind)
     refresh_selector();
 }
 
-static void set_b_target(const an_cand_t *target)
+static void apply_b_target(const an_cand_t *target)
 {
-    if (!sel_open || cur_b < 0 || sel_deck != cur_b) return;
     b_targets[cur_b].target = *target;
     b_targets[cur_b].valid = 1;
     decks[cur_b].loop.released = 0;
     close_selector();
     shown_display_valid = 0;
     update_guide(mono_ms());
+}
+
+static void set_b_target(const an_cand_t *target)
+{
+    if (sel_open && cur_b >= 0 && sel_deck == cur_b)
+        apply_b_target(target);
 }
 
 static void set_b_here(void)
@@ -953,6 +958,12 @@ static void register_settings(const az_screen_v1 *settings)
     }
 }
 
+#ifdef ANCHOR_MCP
+#include "mcp-tools.c"
+#else
+static void anchor_mcp_register(void) {}
+#endif
+
 static int init(const az_core_v1 *core)
 {
     if (!core_services_ready(core)) return -1;
@@ -1000,6 +1011,7 @@ static int init(const az_core_v1 *core)
 
     register_settings(settings);
     update_guide(mono_ms());
+    anchor_mcp_register();
     return 0;
 }
 
@@ -1009,6 +1021,9 @@ static const az_mod_v1 MOD = {
     .id = MOD_ID,
     .fw_tags = TAGS,
     .init = init,
+#ifdef ANCHOR_MCP
+    .tick = anchor_mcp_tick,
+#endif
 };
 
 AZ_MOD_EXPORT const az_mod_v1 *az_mod_v1_entry(void)

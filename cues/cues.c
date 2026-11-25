@@ -3,6 +3,7 @@
 #include "cues.h"
 #include "azmod-data-helpers.h"
 #include <stdatomic.h>
+#include <stdbool.h>
 #include <stdio.h>
 #include <string.h>
 #include <time.h>
@@ -56,7 +57,7 @@ static struct plan_job {
     az_phrase phrases[MAX_PHRASES];
     az_native_cue_snapshot existing;
     uint32_t rate;
-    uint64_t epoch, revision, config_revision;
+    uint64_t epoch, revision, config_revision, preview_call;
     int manual;
     cues_plan result;
     int status;
@@ -651,14 +652,15 @@ static int filter_metadata_ready(const cues_config *config,
     return 1;
 }
 static void schedule_plan(int deck, const az_deck_snapshot *native,
-                          const az_native_cue_snapshot *existing)
+                          const az_native_cue_snapshot *existing, uint64_t preview_call)
 {
     struct deck_state *d = &decks[deck];
     struct plan_job *j = &jobs[deck];
     if (atomic_load_explicit(&j->phase, memory_order_acquire) != 0)
         return;
     j->config = *cues_settings_config();
-    j->manual = d->manual_requested;
+    j->manual = !preview_call && d->manual_requested;
+    j->preview_call = preview_call;
     j->config.enabled = 1;
     j->track = d->track;
     memcpy(j->beats, d->beats, d->track.beat_count * sizeof *j->beats);
@@ -673,25 +675,57 @@ static void schedule_plan(int deck, const az_deck_snapshot *native,
     j->epoch = d->epoch;
     j->revision = d->revision;
     j->config_revision = config_revision;
-    d->native_load = native->native_load_generation;
+    if (!preview_call)
+        d->native_load = native->native_load_generation;
     atomic_store_explicit(&j->phase, 1, memory_order_release);
 }
-static void manual_apply(int deck)
+static int manual_apply(int deck)
 {
     struct deck_state *d = &decks[deck];
     if (!d->loaded) {
         status(deck, "load a track first");
-        return;
+        return AZ_PENDING;
     }
     if (d->pending || d->confirming || d->plan_ready ||
         atomic_load_explicit(&jobs[deck].phase, memory_order_acquire)) {
         status(deck, "cue placement is already in progress");
-        return;
+        return AZ_BUSY;
     }
     d->manual_requested = 1;
     d->retries = 0;
     status(deck, "waiting for analysis to apply rules");
+    return AZ_OK;
 }
+#ifdef CUES_MCP
+static bool mcp_target(int deck, uint64_t load, unsigned revision)
+{
+    cues_revisions current;
+    cues_settings_revisions(&current);
+    return current.active == revision && decks[deck].epoch == load && decks[deck].loaded;
+}
+
+int cues_mcp_apply_track(int deck, uint64_t load, unsigned revision)
+{
+    if (!mcp_target(deck, load, revision))
+        return AZ_STALE;
+    return manual_apply(deck);
+}
+
+int cues_mcp_request_preview(int deck, uint64_t load, unsigned revision, uint64_t call)
+{
+    if (!mcp_target(deck, load, revision))
+        return AZ_STALE;
+    if (atomic_load_explicit(&jobs[deck].phase, memory_order_acquire))
+        return AZ_BUSY;
+    az_deck_snapshot native;
+    az_native_cue_snapshot existing;
+    if (!native_state(deck, now_ns(), &native, &existing))
+        return AZ_BUSY;
+    schedule_plan(deck, &native, &existing, call);
+    return AZ_PENDING;
+}
+#endif
+
 static int cue_identity_matches(const az_cue_entry *a, const az_cue_entry *b)
 {
     return a->classification == b->classification && a->slot == b->slot && a->type == b->type && (b->valid & AZ_CUE_START);
@@ -855,16 +889,35 @@ static void acknowledge_command(struct deck_state *d)
         Q->command_acknowledge(CUES_ID, d->request) == AZ_OK)
         d->acknowledge = 0;
 }
+#ifdef CUES_MCP
+static void complete_preview(const struct deck_state *deck, const struct plan_job *job)
+{
+    int status = plan_job_current(deck, job) ? job->status : AZ_STALE;
+    if (status == AZ_PENDING)
+        status = AZ_BUSY;
+    cues_mcp_preview_complete(job->preview_call, status,
+                              status == AZ_OK ? &job->result : NULL);
+}
+#endif
 
 static void receive_plan_job(int i)
 {
     struct deck_state *d = &decks[i];
     acknowledge_command(d);
     struct plan_job *j = &jobs[i];
-    if (atomic_load_explicit(&j->phase, memory_order_acquire) == 3) {
-        if (j->status == AZ_OK && plan_job_current(d, j)) {
+    if (atomic_load_explicit(&j->phase, memory_order_acquire) != 3)
+        return;
+#ifdef CUES_MCP
+    if (j->preview_call) {
+        complete_preview(d, j);
+        atomic_store_explicit(&j->phase, 0, memory_order_release);
+        return;
+    }
+#endif
+    if (plan_job_current(d, j)) {
+        if (j->status == AZ_OK) {
             install_plan(d, j);
-        } else if (j->status != AZ_OK && plan_job_current(d, j)) {
+        } else {
             d->finished_revision = j->revision;
             d->finished_config = j->config_revision;
             status(i,
@@ -872,8 +925,8 @@ static void receive_plan_job(int i)
                        ? "waiting for track analysis"
                        : "rule evaluation unavailable for this analysis");
         }
-        atomic_store_explicit(&j->phase, 0, memory_order_release);
     }
+    atomic_store_explicit(&j->phase, 0, memory_order_release);
 }
 
 static int tick_due(uint64_t clock)
@@ -914,7 +967,7 @@ static void schedule_ready_plan(int i, const cues_config *config, const az_deck_
     }
     if (d->finished_revision != d->revision ||
         d->finished_config != config_revision || d->manual_requested)
-        schedule_plan(i, native, existing);
+        schedule_plan(i, native, existing, 0);
     return;
 }
 
@@ -1142,16 +1195,17 @@ static void advance_deck(int i, uint64_t clock, const cues_config *config)
 static void tick(void)
 {
     cues_settings_tick();
+#ifdef CUES_MCP
+    cues_mcp_tick();
+#endif
     for (int i = 0; i < 4; ++i) receive_plan_job(i);
     uint64_t clock = now_ns();
     if (!tick_due(clock)) return;
     const cues_config *config = cues_settings_config();
     az_data_capabilities caps = { .size = sizeof caps };
     if (O->data_capabilities(&caps) != AZ_OK ||
-        (caps.commands & WRITE_COMMANDS) != WRITE_COMMANDS) {
-        cues_settings_status("Waiting for SDK cue creation support");
+        (caps.commands & WRITE_COMMANDS) != WRITE_COMMANDS)
         return;
-    }
     for (int i = 0; i < 4; ++i) advance_deck(i, clock, config);
 }
 static int surface_services_valid(const az_core_v1 *core)
@@ -1201,6 +1255,30 @@ static int create_surfaces(void)
     return 1;
 }
 
+static int start_observation(void)
+{
+    az_deck_watch_v1 watch = { .size = sizeof watch,
+                               .version = AZ_DATA_VERSION,
+                               .deck_mask = AZ_STATUS_ALL_DECKS,
+                               .position_hz = 1,
+                               .topics = TOPICS };
+    if (O->on_deck_status(CUES_ID, &watch, deck_status, NULL, &subscription) !=
+        AZ_OK)
+        return -5;
+    cues_settings_status(cues_settings_config()->enabled
+                             ? "Waiting for loaded tracks"
+                             : "Automatic placement off");
+    return 0;
+}
+
+#ifdef CUES_MCP
+static void start_mcp(const az_core_v1 *core)
+{
+    if (cues_mcp_init(core) != AZ_OK && AZ_HAS(core, log))
+        core->log(CUES_ID, "MCP provider startup failed");
+}
+#endif
+
 static int init(const az_core_v1 *core)
 {
     if (!core_services_valid(core)) return -1;
@@ -1214,18 +1292,12 @@ static int init(const az_core_v1 *core)
     if (!create_surfaces()) return -6;
     if (C->thread_start(CUES_ID, "cues-plan", plan_worker, NULL))
         return -4;
-    az_deck_watch_v1 watch = { .size = sizeof watch,
-                               .version = AZ_DATA_VERSION,
-                               .deck_mask = AZ_STATUS_ALL_DECKS,
-                               .position_hz = 1,
-                               .topics = TOPICS };
-    if (O->on_deck_status(CUES_ID, &watch, deck_status, NULL, &subscription) !=
-        AZ_OK)
-        return -5;
-    cues_settings_status(cues_settings_config()->enabled
-                             ? "Waiting for loaded tracks"
-                             : "Automatic placement off");
-    return 0;
+    int status = start_observation();
+#ifdef CUES_MCP
+    if (!status)
+        start_mcp(core);
+#endif
+    return status;
 }
 static const char *const firmware[] = { "any", NULL };
 static const az_mod_v1 mod = { .abi = AZ_MOD_ABI,

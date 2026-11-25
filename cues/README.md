@@ -2,13 +2,15 @@
 
 Create hot cues, memory cues and saved loops from **Phrase** and **Absolute** rules. Cues uses only the public AZ-MODS SDK; native cue creation belongs to the core.
 
-Open **Mod Menu → Community Mods → Installed → Cues**. Create a group, add its rules, and choose **Apply changes**. Edits remain a draft until Apply; **Files → Discard draft** restores the applied configuration.
+Open **Mod Menu → Community Mods → Installed → Cues**. Open or add a group, then choose **+ Add rule**. Rules appear as sentences in the group. Tap a highlighted value in the sentence or select it with the browse knob to edit it. Use the toolbar to switch between **Phrase** and **Absolute**, or to show the **Offset** and **Loop** clauses. **Save rule** updates the group's draft and **Cancel** discards the current rule edit. Choose **Apply changes** to activate the draft and queue the USB save. **Files → Discard draft changes** restores the applied configuration.
+
+Choose **Help** in Cues Settings or in the rule editor for a walkthrough and an example. **Back** returns to the rule you were editing.
 
 On the waveform screen, press **CUES**, then choose a logical deck. Manual application works with automatic placement switched off. If the track has hot cues or memory cues, a confirmation asks to replace the whole cue bank. Cancel leaves it untouched. A track change or a cue edit while the confirmation is open invalidates it. If no rules match, existing cues stay intact.
 
 **Config → Apply on track load** enables automatic placement, off by default. It waits for the analysis required by matching rules, the source sample rate, track duration and known cue state. Absolute rules need no phrase analysis. Beat/bar positions, beat/bar loop lengths and quantization wait for a usable grid before any part of the plan is saved. Any existing hot cue, memory cue or saved loop skips the entire track. Automatic placement never deletes or overwrites an existing bank. Saved definitions remain on the track after reload, so reloading a track containing them also skips placement. Changing rules does not repeat a completed automatic application on the same load; use the CUES button to replace an existing bank.
 
-Groups support artist substring, exact original key and BPM range filters. Matching ignores ASCII letter case. Empty artist/key filters match any value; zero group BPM limits inherit the global range. Unknown required metadata prevents a match. Up to eight groups can contain sixteen rules each.
+Groups support artist substring, exact original key and BPM range filters. Matching ignores ASCII letter case. Empty artist/key filters match any value; zero group BPM limits inherit the global range. New groups also inherit the global quantization setting by default. Unknown required metadata prevents a match. Up to eight groups can contain sixteen rules each.
 
 Each rule selects:
 
@@ -17,7 +19,7 @@ Each rule selects:
 - **Absolute:** a zero-based position in seconds, beats or bars.
 - A saved loop with a fixed length, or, for Phrase rules, from the phrase start / to its end.
 
-For hot cues with **Occurrence → All**, **Hot cue pad** displays `*`. Each matching occurrence takes the next free pad in A–H order, within the configured pad limit. Numbered occurrences and Absolute rules use the selected fixed pad. Memory cues show a disabled pad field because they do not use hot pads.
+For hot cues with **Occurrence → all**, the sentence says “on the next free pad.” Each matching occurrence takes the next free pad in A–H order, within the configured pad limit. Numbered occurrences and Absolute rules show a selectable fixed pad. Memory cue sentences omit the pad.
 
 **Config → Consolidate phrases** treats consecutive phrases of the same decoded type that share a beat boundary as a single occurrence. Phrase rules use the combined span for start, middle, end, saved-loop boundaries, and label length. The JSON setting is `consolidatePhrases` and defaults to Off when omitted.
 
@@ -40,7 +42,7 @@ Applied configuration is saved by a worker to `MODS/community-mods/cues/data/cue
 /media/usb/sda1/MODS/community-mods/cues/data/cue-rules.json
 ```
 
-Copy this file to keep a backup or share rules. To restore or edit rules outside the deck, replace the file while Cues is stopped, then restart AZ-MODS or the deck to load it. Loading is bounded to 128 KiB, validates all values atomically and rejects unsupported rule types or fields. An invalid file leaves Cues using its default configuration and reports the error. USB removal leaves the applied in-memory configuration available; **Files** shows save status and provides **Apply and save changes** and **Discard draft changes**.
+Each JSON rule contains a `data` object used for placement and a generated `sentence` for display. If the sentences would exceed the 128 KiB file limit, Cues saves the rule data and regenerates the sentences when it loads them. Copy this file to keep a backup or share rules. To restore or edit rules outside the deck, replace the file while Cues is stopped, then restart AZ-MODS or the deck to load it. Cues validates the loaded values atomically and rejects unsupported rule types or fields. An invalid file loads the default configuration and reports the error. USB removal leaves the applied in-memory configuration available. **Files** shows save status and provides **Apply and save changes** and **Discard draft changes**.
 
 The [default rules file](examples/cue-rules.json) enables automatic placement and phrase consolidation for all genres, with no artist/key filters and the full supported BPM range (1–500). Hot cues use distinct pad colors, and phrase-based cues show the phrase type and its total bar count. Save it as `cue-rules.json` at the location above. It contains:
 

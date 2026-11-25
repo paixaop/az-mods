@@ -13,10 +13,55 @@ const char *const cues_color_names[CUES_COLOR_COUNT] = { "Pink", "Red", "Orange"
                                                        "Aqua", "Blue", "Purple", "No Color", "By pad" };
 const char *const cues_phrase_names[8] = { "Any", "Intro", "Build", "Break",
                                            "Chorus/Drop", "Outro", "Verse", "Bridge" };
+const char *const cues_occurrences[11] = { "all", "1st", "2nd", "3rd", "4th", "5th",
+                                           "6th", "7th", "8th", "9th", "10th" };
 static const char *const units[] = { "bars", "beats", "seconds" };
 static const char *const quant[] = { "Inherit", "Off", "Beat", "Bar" };
 static const char *const measures[] = { "Bars", "Beats", "Seconds" };
 static const char *const anchors[] = { "start", "middle", "end" };
+static void sentence_pad(const cues_rule *r, char *out, size_t n)
+{
+    if (r->cue_type == AZ_CUE_MEMORY)
+        snprintf(out, n, "Memory Cue");
+    else if (cues_rule_auto_pad(r))
+        snprintf(out, n, "Hot Cue on the next free pad");
+    else
+        snprintf(out, n, "Hot Cue on pad %c", 'A' + r->pad - 1);
+}
+static void sentence_position(const cues_rule *r, char *out, size_t n)
+{
+    if (r->anchor == CUES_ABSOLUTE) {
+        snprintf(out, n, "at %.9g %s", r->position, units[r->unit]);
+        return;
+    }
+    char offset[64] = "";
+    if (r->offset != 0)
+        snprintf(offset, sizeof offset, ", offset by %.9g %s", r->offset, units[r->offset_unit]);
+    snprintf(out, n, "at the %s of %s%s %s phrase%s%s", anchors[r->phrase_point],
+             r->phrase_index ? "the " : "", cues_occurrences[r->phrase_index],
+             cues_phrase_names[r->phrase_type], r->phrase_index ? "" : "s", offset);
+}
+static void sentence_loop(const cues_rule *r, char *out, size_t n)
+{
+    switch (r->loop_mode) {
+    case CUES_LOOP_FIXED:
+        snprintf(out, n, ", and loop %.9g %s", r->loop_length, units[r->loop_unit]);
+        break;
+    case CUES_LOOP_FROM_START: snprintf(out, n, ", and loop from phrase start"); break;
+    case CUES_LOOP_TO_END: snprintf(out, n, ", and loop to phrase end"); break;
+    default: out[0] = 0; break;
+    }
+}
+void cues_rule_sentence(const cues_rule *r, char *out, size_t n)
+{
+    char pad[40], position[148], loop[64];
+    sentence_pad(r, pad, sizeof pad);
+    sentence_position(r, position, sizeof position);
+    sentence_loop(r, loop, sizeof loop);
+    snprintf(out, n, "Create a %s, %s%s, set color to %s, and name it '%s'%s%s",
+             pad, position, loop, cues_color_names[r->color], r->name,
+             r->comment[0] ? ", with comment " : "", r->comment);
+}
 static int errorf(char *out, size_t n, const char *s)
 {
     if (n)
@@ -38,6 +83,7 @@ void cues_group_default(cues_group *g, const cues_config *c)
 {
     memset(g, 0, sizeof *g);
     g->enabled = 1;
+    g->quantization = CUES_INHERIT;
     g->measures_in = c->measures_in;
     snprintf(g->name, sizeof g->name, "New group");
 }
@@ -850,7 +896,7 @@ int cues_config_parse(cues_config *out, const char *json, size_t length, char *e
 typedef struct {
     char *s;
     size_t n, p;
-    int okay;
+    int okay, sentences;
 } writer;
 static void writef(writer *w, const char *fmt, ...)
 {
@@ -898,9 +944,16 @@ static void write_anchor(writer *w, const cues_rule *r)
         writef(w, ",\"offset\":{\"value\":%.17g,\"unit\":\"%s\"}", r->offset,
                units[r->offset_unit]);
 }
-static void write_rule(writer *w, const cues_rule *r, int j)
+static void write_rule_sentence(writer *w, const cues_rule *r)
 {
-    writef(w, "%s\n      {\"data\":{\"enabled\":%s,\"type\":\"%s\"", j ? "," : "",
+    char sentence[512];
+    cues_rule_sentence(r, sentence, sizeof sentence);
+    writef(w, ",\"sentence\":");
+    quoted(w, sentence);
+}
+static void write_rule_data(writer *w, const cues_rule *r)
+{
+    writef(w, "{\"enabled\":%s,\"type\":\"%s\"",
            r->enabled ? "true" : "false", r->cue_type == AZ_CUE_HOT ? "hot" : "memory");
     if (r->cue_type == AZ_CUE_HOT)
         writef(w, ",\"pad\":\"%c\"", cues_rule_auto_pad(r) ? '*' : 'A' + r->pad - 1);
@@ -914,7 +967,14 @@ static void write_rule(writer *w, const cues_rule *r, int j)
     quoted(w, r->name);
     writef(w, ",\"comment\":");
     quoted(w, r->comment);
-    writef(w, "}}");
+    writef(w, "}");
+}
+static void write_rule(writer *w, const cues_rule *r, int j)
+{
+    writef(w, "%s\n      {\"data\":", j ? "," : "");
+    write_rule_data(w, r);
+    if (w->sentences) write_rule_sentence(w, r);
+    writef(w, "}");
 }
 static void write_group(writer *w, const cues_group *g, int i)
 {
@@ -935,12 +995,9 @@ static void write_group(writer *w, const cues_group *g, int i)
     writef(w, "\n    ]}");
 }
 
-int cues_config_json(const cues_config *c, char *json, size_t capacity)
+static int format_config_json(const cues_config *c, char *json, size_t capacity, int sentences)
 {
-    char error[128];
-    if (!json || !capacity || !cues_config_validate(c, error, sizeof error))
-        return 0;
-    writer w = { json, capacity, 0, 1 };
+    writer w = { json, capacity, 0, 1, sentences };
     writef(&w,
            "{\n  \"version\":1,\n  "
            "\"config\":{\"enabled\":%s,\"maxMemoryCues\":%d,\"hotCuePads\":%d,\"minBpm\":%.17g,"
@@ -952,4 +1009,13 @@ int cues_config_json(const cues_config *c, char *json, size_t capacity)
     for (int i = 0; i < c->group_count; i++) write_group(&w, &c->groups[i], i);
     writef(&w, "\n  ]\n}\n");
     return w.okay ? (int)w.p : 0;
+}
+int cues_config_json(const cues_config *c, char *json, size_t capacity)
+{
+    char error[128];
+    if (!json || !capacity || !cues_config_validate(c, error, sizeof error))
+        return 0;
+    int length = format_config_json(c, json, capacity, 1);
+    /* The sentence is derived. Keep all rule data if only the summaries exceed the limit. */
+    return length ? length : format_config_json(c, json, capacity, 0);
 }

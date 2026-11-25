@@ -1,0 +1,16 @@
+{
+  "azmod": 1,
+  "id": "set-planner",
+  "name": "Set Planner",
+  "version": "0.2.4",
+  "author": "pedro",
+  "summary": "Plan a USB playlist by harmonic key, tempo, and phrase energy.",
+  "description": "Open Plan Set from the USB playlist MENU, optionally lock the first or last track, and preview a mixable order. Score the full track or selected phrases, reuse analysis stored on USB, and save the previewed order to the original playlist.",
+  "license": "GPL-3.0-only",
+  "source": "https://github.com/paixaop/az-mods/tree/main/set-planner",
+  "category": "tools",
+  "api": 2,
+  "firmware": ["any"],
+  "hooks": false,
+  "min_core": "1.2.8"
+}

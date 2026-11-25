@@ -69,6 +69,8 @@ static void set_cfg(const char *id, const char *key, int value)
     assert(!strcmp(id, MOD_ID));
     if (!strcmp(key, "auto-login")) cfg_auto = value;
     else if (!strcmp(key, "remember")) cfg_remember = value;
+    else if (!strcmp(key, "delay-sec")) cfg_delay = value;
+    else if (!strcmp(key, "attempts")) cfg_attempts = value;
     else assert(!"unexpected setting write");
     cfg_writes++;
 }

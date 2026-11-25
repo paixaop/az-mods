@@ -49,7 +49,12 @@ int main(void)
     }
     int n = cues_config_json(&original, json, sizeof json);
     assert(n > 0);
+    assert(strstr(json, "\"sentence\":\"Create a Hot Cue on pad A, at the start of the 1st Intro phrase"));
     assert(cues_config_parse(&parsed, json, (size_t)n, error, sizeof error));
+    assert(!memcmp(&original, &parsed, sizeof original));
+    int compact = cues_config_json(&original, json, (size_t)n);
+    assert(compact > 0 && compact < n && !strstr(json, "\"sentence\":"));
+    assert(cues_config_parse(&parsed, json, (size_t)compact, error, sizeof error));
     assert(!memcmp(&original, &parsed, sizeof original));
     assert(!cues_config_json(&original, json, 20));
     rejected("{}");
