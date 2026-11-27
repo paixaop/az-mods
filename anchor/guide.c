@@ -482,7 +482,7 @@ static int loop_timing_ready(const plan_timing_t *t, const an_deck_t *b, const a
     }
     if (order == AZ_TIME_AFTER) {
         out->notice = AN_NOTICE_LOOP_AFTER_DROP;
-        set_action(out, AN_ST_OFF, 0, 2, "LOOP OUT IS AFTER B TARGET — MOVE THE LOOP", 0, t->bar_ms, 0);
+        set_action(out, AN_ST_OFF, 0, 2, "LOOP OUT IS AFTER B TARGET · MOVE THE LOOP", 0, t->bar_ms, 0);
         return 0;
     }
     return 1;
@@ -507,7 +507,7 @@ static void aligned_loop(const plan_timing_t *t, double best, double tloop, an_p
 {
     double open_at = best - tloop;
     if ((double)t->now_ms >= open_at) {
-        set_action(out, AN_ST_OPEN, 2, 4, "WINDOW OPEN — PRESS EXIT", 0, t->bar_ms, (uint64_t)best);
+        set_action(out, AN_ST_OPEN, 2, 4, "WINDOW OPEN · PRESS EXIT", 0, t->bar_ms, (uint64_t)best);
         out->window_open = 1;
         out->out_wall_ms = (uint64_t)best;
         out->loops = 0;
@@ -531,14 +531,14 @@ static void playing_loop(const plan_timing_t *t, const an_deck_t *b, const an_lo
         char s[64], bs[32];
         double next_window = best - tloop;
         fmt_bars(bs, sizeof bs, next_window - (double)t->now_ms, t->bar_ms);
-        snprintf(s, sizeof s, "MISSED — NEXT WINDOW IN %s", bs);
+        snprintf(s, sizeof s, "MISSED · NEXT WINDOW IN %s", bs);
         set_action(out, AN_ST_MISSED, 0, 3, s, next_window - (double)t->now_ms, t->bar_ms, (uint64_t)best);
     } else {
         char s[64];
         if (best_err > 0)
-            snprintf(s, sizeof s, "LOOP PHASE LATE BY %.0f ms — RESTART B", best_err);
+            snprintf(s, sizeof s, "LOOP PHASE LATE BY %.0f ms · RESTART B", best_err);
         else
-            snprintf(s, sizeof s, "LOOP PHASE EARLY BY %.0f ms — RESTART B", -best_err);
+            snprintf(s, sizeof s, "LOOP PHASE EARLY BY %.0f ms · RESTART B", -best_err);
         set_action(out, AN_ST_OFF, 0, 2, s, 0, t->bar_ms, (uint64_t)best);
     }
 }
@@ -550,13 +550,13 @@ static void paused_loop(const plan_timing_t *t, const an_deck_t *b, const an_loo
     double d = (double)loop->out_ms - (double)b->pos_ms;
     if (d <= 0) {
         out->notice = AN_NOTICE_HEAD_PAST_LOOP;
-        set_action(out, AN_ST_OFF, 0, 2, "B HEAD IS PAST THE LOOP — CUE AT ITS START", 0, t->bar_ms, 0);
+        set_action(out, AN_ST_OFF, 0, 2, "B HEAD IS PAST THE LOOP · CUE AT ITS START", 0, t->bar_ms, 0);
         return;
     }
     double base = t->exit_wall - d / t->rate;
     double earliest = (double)t->now_ms - AN_PLAY_GRACE_MS;
     if (base < earliest) {
-        set_action(out, AN_ST_MISSED, 0, 3, "TOO LATE FOR THIS TARGET — PICK THE NEXT", 0, t->bar_ms, 0);
+        set_action(out, AN_ST_MISSED, 0, 3, "TOO LATE FOR THIS TARGET · PICK THE NEXT", 0, t->bar_ms, 0);
         return;
     }
     double extra = floor((base - earliest) / tloop);
@@ -582,11 +582,11 @@ static void playing_unlooped(const plan_timing_t *t, const an_deck_t *b, an_cand
         if (fabs(err) <= t->tolerance)
             snprintf(s, sizeof s, "B ALREADY ALIGNED · TARGET IN %s", bs);
         else
-            snprintf(s, sizeof s, "B PLAYING · TARGET IN %s — LOOP B TO ALIGN", bs);
+            snprintf(s, sizeof s, "B PLAYING · TARGET IN %s · LOOP B TO ALIGN", bs);
         set_action(out, AN_ST_PLAYING, 0, fabs(err) <= t->tolerance ? 4 : 2, s, drop_in, t->bar_ms, 0);
         out->drop_aligned = fabs(err) <= t->tolerance;
     } else {
-        set_action(out, AN_ST_PLAYING, 0, 2, "B IS PAST ITS DROP — PICK ANOTHER TARGET", 0, t->bar_ms, 0);
+        set_action(out, AN_ST_PLAYING, 0, 2, "B IS PAST ITS DROP · PICK ANOTHER TARGET", 0, t->bar_ms, 0);
     }
     return;
 }
@@ -596,7 +596,7 @@ static void paused_unlooped(const plan_timing_t *t, const an_deck_t *b, an_cand_
     /* B paused, no loop: one exact play moment. */
     double start = t->target_wall - ((double)drop.ms - (double)b->pos_ms) / t->rate;
     if (start < (double)t->now_ms - AN_PLAY_GRACE_MS) {
-        set_action(out, AN_ST_MISSED, 0, 3, "TOO LATE FOR THIS TARGET — PICK THE NEXT", 0, t->bar_ms, 0);
+        set_action(out, AN_ST_MISSED, 0, 3, "TOO LATE FOR THIS TARGET · PICK THE NEXT", 0, t->bar_ms, 0);
         return;
     }
     char s[72], bs[32];

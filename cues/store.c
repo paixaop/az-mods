@@ -1,4 +1,8 @@
 /* SPDX-License-Identifier: GPL-3.0-only */
+/* glibc exposes mkostemp only with GNU extensions enabled. */
+#ifndef _GNU_SOURCE
+#define _GNU_SOURCE 1
+#endif
 #include "store.h"
 #include <errno.h>
 #include <fcntl.h>
