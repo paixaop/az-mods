@@ -56,16 +56,16 @@ $(OUT)/$(MOD_ID).so: $(SRCS) $(HEADERS) Makefile | $(OUT)
 $(OUT):
 	mkdir -p $(OUT)
 
-unit: tests/test_anchor.c tests/test_display.c tests/test_lifecycle.c $(SRCS) $(HEADERS)
+unit: tests/test_anchor.c tests/test_display.c tests/test_lifecycle.c $(SRCS) $(HEADERS) | $(OUT)
 	$(CC) -O1 -g -Wall -Wextra -Werror $(UNIT_SAN_FLAGS) -I. -I$(AZ_SDK_INCLUDE) \
-	    -o tests/test_anchor tests/test_anchor.c guide.c -lm
-	./tests/test_anchor
+	    -o "$(OUT)/test_anchor" tests/test_anchor.c guide.c -lm
+	"$(OUT)/test_anchor"
 	$(CC) -O1 -g -Wall -Wextra -Werror $(UNIT_SAN_FLAGS) -I. -I$(AZ_SDK_INCLUDE) \
-	    -o tests/test_display tests/test_display.c display.c -lm
-	./tests/test_display
+	    -o "$(OUT)/test_display" tests/test_display.c display.c -lm
+	"$(OUT)/test_display"
 	$(CC) -O1 -g -Wall -Wextra -Werror $(UNIT_SAN_FLAGS) -D_GNU_SOURCE -I. -I$(AZ_SDK_INCLUDE) \
-	    -o tests/test_lifecycle tests/test_lifecycle.c $(filter-out anchor.c,$(SRCS)) -lm
-	./tests/test_lifecycle
+	    -o "$(OUT)/test_lifecycle" tests/test_lifecycle.c $(filter-out anchor.c,$(SRCS)) -lm
+	"$(OUT)/test_lifecycle"
 
 $(OUT)/render_ui: tools/render_strip.c $(SRCS) $(HEADERS) | $(OUT)
 	$(TEST_CC) -O1 -g -Wall -Wextra -Werror -D_GNU_SOURCE -I. -I$(AZ_SDK_INCLUDE) \
