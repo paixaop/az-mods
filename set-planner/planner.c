@@ -6,13 +6,15 @@
 #include <string.h>
 #include <strings.h>
 
-typedef struct { double points[4]; int count; } Curve;
 const char *const sp_curve_names[SP_CURVES] = {
     "Opening", "Primetime", "Closing", "Full night", "B2B"
 };
-static const Curve curves[SP_CURVES] = {
-    {{2, 4, 6}, 3}, {{6, 10, 8}, 3}, {{8, 5, 3}, 3},
-    {{3, 7, 10, 5}, 4}, {{5, 7, 6}, 3}
+static const SpArc curves[SP_CURVES] = {
+    {{{0, 2}, {0.5, 4}, {1, 6}}, 3},
+    {{{0, 6}, {0.5, 10}, {1, 8}}, 3},
+    {{{0, 8}, {0.5, 5}, {1, 3}}, 3},
+    {{{0, 3}, {1.0 / 3, 7}, {2.0 / 3, 10}, {1, 5}}, 4},
+    {{{0, 5}, {0.5, 7}, {1, 6}}, 3}
 };
 
 static bool interrupted(const SpOptions *options)
@@ -20,12 +22,27 @@ static bool interrupted(const SpOptions *options)
     return options->cancelled && options->cancelled(options->user);
 }
 
-static double curve_at(const Curve *curve, double position)
+const SpArc *sp_arc(const SpOptions *options)
 {
-    double index = sp_clamp(position, 0, 1) * (curve->count - 1);
-    int left = (int)index;
-    int right = left + (left < curve->count - 1);
-    return curve->points[left] + (index - left) * (curve->points[right] - curve->points[left]);
+    return options->custom_arc.count ? &options->custom_arc : &curves[options->curve];
+}
+
+double sp_arc_energy(const SpArc *arc, double position)
+{
+    position = sp_clamp(position, 0, 1);
+    int right = 1;
+    while (right < arc->count - 1 && position > arc->points[right].position)
+        ++right;
+    SpAnchor a = arc->points[right - 1], b = arc->points[right];
+    double fraction = (position - a.position) / (b.position - a.position);
+    return a.energy + fraction * (b.energy - a.energy);
+}
+
+double sp_track_position(int index, int count, double center, double duration)
+{
+    if (duration > 0)
+        return center / duration;
+    return count > 1 ? (double)index / (count - 1) : 0.5;
 }
 
 static bool note_mode(const char *suffix, bool *major)
@@ -235,14 +252,14 @@ SpMetrics sp_measure(const SpTrack *tracks, int count, const int *order,
     SpMetrics metrics = {0};
     if (count < 2)
         return metrics;
-    const Curve *curve = &curves[options->curve];
+    const SpArc *arc = sp_arc(options);
     double duration = set_duration(tracks, count, options), elapsed = 0;
     for (int i = 0; i < count; ++i) {
         const SpTrack *track = &tracks[track_at(order, i)];
-        double position = duration > 0
-            ? (elapsed + track->duration / 2) / duration : (double)i / (count - 1);
-        double delta = track->energy - curve_at(curve, position);
+        double position = sp_track_position(i, count, elapsed + track->duration / 2, duration);
+        double delta = track->energy - sp_arc_energy(arc, position);
         metrics.score += 1.5 * delta * delta;
+        metrics.energy_error += track->energy_known * delta * delta;
         elapsed += track->duration;
         if (i > 0)
             measure_transition(&metrics, &tracks[track_at(order, i - 1)], track, options);
@@ -551,11 +568,11 @@ static void arrange_zones(const ClusterPlan *plan)
     Zone zones[8] = {0};
     const SpOptions *options = plan->options;
     int present = zone_stats(plan->tracks, plan->pool, plan->labels, plan->count, zones);
-    const Curve *curve = &curves[options->curve];
+    const SpArc *arc = sp_arc(options);
     int written = 0;
     for (int step = 0; step < present && !interrupted(options); ++step) {
         double position = present == 1 ? 0.5 : (double)step / (present - 1);
-        int group = pick_zone(zones, plan->groups, curve_at(curve, position));
+        int group = pick_zone(zones, plan->groups, sp_arc_energy(arc, position));
         int size = zone_members(plan->pool, plan->labels, plan->count, group, plan->members);
         arrange_cluster(plan->tracks, plan->members, size, options);
         int predecessor = written ? plan->out[written - 1] : options->opener;

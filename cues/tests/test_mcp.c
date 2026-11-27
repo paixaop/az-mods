@@ -7,6 +7,14 @@ static cues_revisions revisions;
 static int commit_blocked;
 static cmcp_json_t *reply;
 static int reply_status;
+static unsigned provider_stops, worker_attempts;
+static int register_status, worker_status;
+static max_align_t fake_provider;
+
+static az_mcp_provider *registered_provider(void)
+{
+    return (az_mcp_provider *)&fake_provider;
+}
 
 const cues_config *cues_settings_config(void)
 {
@@ -51,10 +59,15 @@ int az_mcp_register_tools(const az_core_v1 *core, const char *id,
                           const az_mcp_tool_v1 *entries, size_t count, az_mcp_provider **out)
 {
     (void)core;
-    (void)id;
-    (void)out;
-    assert(count == 19 && entries[0].grant == AZ_MCP_READ);
-    return AZ_OK;
+    assert(!strcmp(id, CUES_ID) && count == 19 && entries[0].grant == AZ_MCP_READ);
+    *out = register_status == AZ_OK ? registered_provider() : NULL;
+    return register_status;
+}
+
+void az_mcp_provider_stop(az_mcp_provider *p)
+{
+    assert(p == registered_provider());
+    ++provider_stops;
 }
 
 int az_mcp_provider_complete(az_mcp_provider *p, uint64_t id, int status, cmcp_json_t *result)
@@ -162,13 +175,28 @@ static int fake_thread(const char *id, const char *name, void *(*fn)(void *), vo
 {
     assert(!strcmp(id, CUES_ID) && !strcmp(name, "cues-mcp-edit"));
     assert(fn && user);
-    return 0;
+    ++worker_attempts;
+    return worker_status;
+}
+
+static void test_startup(void)
+{
+    const az_core_v1 core = { .size = sizeof core, .thread_start = fake_thread };
+    register_status = AZ_BUSY;
+    assert(cues_mcp_init(&core) == AZ_BUSY);
+    assert(!worker_attempts && !provider_stops && !provider);
+    register_status = AZ_OK;
+    worker_status = -1;
+    assert(cues_mcp_init(&core) == AZ_FAILED);
+    assert(worker_attempts == 1 && provider_stops == 1 && !provider);
+    worker_status = 0;
+    assert(cues_mcp_init(&core) == AZ_OK);
+    assert(worker_attempts == 2 && provider_stops == 1 && provider == registered_provider());
 }
 
 int main(void)
 {
-    const az_core_v1 core = { .size = sizeof core, .thread_start = fake_thread };
-    assert(cues_mcp_init(&core) == AZ_OK);
+    test_startup();
     test_groups_rules();
     test_settings();
     cmcp_json_free(reply);

@@ -4,8 +4,9 @@
 #include <stdint.h>
 #define MCP_PANEL_LIMIT 16
 struct mcp_panel_request {
-    uint64_t token;
+    uint64_t token, collect_until;
     uint32_t button, hold, view, generation;
+    int status;
     char key[65];
 };
 struct mcp_panel {

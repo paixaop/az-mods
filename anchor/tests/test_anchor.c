@@ -129,6 +129,31 @@ static int offset_grid_targets(void)
     return 0;
 }
 
+static int variable_bar_targets(void)
+{
+    an_beat_t beats[260];
+    int count = 0;
+    for (int bar = 0; bar <= 64; ++bar) {
+        int length = bar == 4 ? 3 : 4;
+        for (int beat = 1; beat <= length; ++beat) {
+            beats[count] = (an_beat_t){(uint32_t)count * 500, 12000, beat};
+            ++count;
+        }
+    }
+    const an_analysis_t grid = {.beats = beats, .nbeats = count};
+    an_target_opts_t opts = {.rule = AN_RULE_GRID16};
+    an_cand_t target, candidates[4];
+    CHECK(an_auto_target(&grid, 1000, &opts, &target) == 0);
+    CHECK(same_time(target.ms, 31500, TRACK_RATE));
+    CHECK(an_candidates(&grid, 1000, TRACK_RATE, &opts, candidates, 4) == 3);
+    for (unsigned i = 0; i < 3; ++i)
+        CHECK(same_time(candidates[i].ms, 32000 * (i + 1) - 500, TRACK_RATE));
+    opts.rule = AN_RULE_GRID32;
+    CHECK(an_auto_target(&grid, 1000, &opts, &target) == 0);
+    CHECK(same_time(target.ms, 63500, TRACK_RATE));
+    return 0;
+}
+
 static int long_loop_countdowns(void)
 {
     an_deck_t a = deck(0, 1), b = deck(0, 1);
@@ -188,6 +213,7 @@ static int long_loop_countdowns(void)
 int main(void)
 {
     int regressions = offset_grid_targets();
+    regressions += variable_bar_targets();
     regressions += long_loop_countdowns();
     CHECK(regressions == 0);
     CHECK(fallback_targets() == 0);

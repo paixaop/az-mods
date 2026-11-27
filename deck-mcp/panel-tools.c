@@ -57,38 +57,69 @@ static bool same_panel(const struct mcp_panel_request *a, const struct mcp_panel
            a->view == b->view && a->generation == b->generation;
 }
 
-static int new_press(struct mcp_runtime *runtime, struct mcp_panel_request *request)
+void mcp_panel_reap(struct mcp_panel *panel, uint64_t now)
 {
-    if (request->generation != atomic_load(&runtime->commands.grant))
+    unsigned kept = 0;
+    for (unsigned i = 0; i < panel->count; ++i)
+        if (!mcp_receipt_expired(now, panel->records[i].collect_until))
+            panel->records[kept++] = panel->records[i];
+    panel->count = kept;
+}
+
+static bool refresh_panel(struct mcp_runtime *runtime, uint64_t now)
+{
+    struct mcp_panel *panel = &runtime->panel;
+    for (unsigned i = 0; i < panel->count; ++i) {
+        struct mcp_panel_request *record = &panel->records[i];
+        if (record->collect_until)
+            continue;
+        record->status = runtime->core->button_poll(MCP_ID, record->token);
+        if (record->status == AZ_PENDING || record->status == AZ_BUSY)
+            return true;
+        record->collect_until = mcp_receipt_deadline(now);
+    }
+    return false;
+}
+
+static int new_press(struct mcp_runtime *runtime, struct mcp_panel_request *request, bool pending)
+{
+    if (request->generation != mcp_live_grant_generation(runtime, az_mcp_clock()))
         return AZ_CANCELLED;
     if (request->view != (uint32_t)runtime->core->view())
         return AZ_STALE;
     if (runtime->panel.count == MCP_PANEL_LIMIT)
         return AZ_LIMIT;
+    /* The core only retains the latest token. Collect it before submitting another. */
+    if (pending)
+        return AZ_BUSY;
+    if (request->generation != mcp_live_grant_generation(runtime, az_mcp_clock()))
+        return AZ_CANCELLED;
     int status = runtime->core->button_press(MCP_ID, request->button, request->hold, &request->token);
-    if (status == AZ_OK)
+    if (status == AZ_OK) {
+        request->status = AZ_PENDING;
         runtime->panel.records[runtime->panel.count++] = *request;
+    }
     return status;
 }
 
-static int panel_poll(struct mcp_runtime *runtime, const struct mcp_panel_request *prior, uint64_t *token)
+static int panel_poll(const struct mcp_panel_request *prior, uint64_t *token)
 {
     if (!prior)
         return AZ_NOT_FOUND;
     *token = prior->token;
-    return runtime->core->button_poll(MCP_ID, *token);
+    return prior->status;
 }
 
 static int panel_press(struct mcp_runtime *runtime, const cmcp_json_t *args, const char *key,
-                       const struct mcp_panel_request *prior, uint64_t *token)
+                       const struct mcp_panel_request *prior, uint64_t *token, bool pending)
 {
     struct mcp_panel_request request = {0};
     if (parse_panel(args, &request) != AZ_OK || (prior && !same_panel(prior, &request)))
         return AZ_INVALID;
     if (prior)
-        return panel_poll(runtime, prior, token);
+        return panel_poll(prior, token);
     snprintf(request.key, sizeof request.key, "%s", key);
-    int status = new_press(runtime, &request);
+    int status = new_press(runtime, &request, pending);
     *token = request.token;
     return status == AZ_OK ? AZ_PENDING : status;
 }
@@ -98,9 +129,12 @@ static int panel_request(struct mcp_runtime *runtime, const cmcp_json_t *args, u
     const char *action = az_mcp_string(args, "action");
     if (!mcp_session_arg(runtime, args) || !action || !key || !key[0] || strlen(key) >= 65)
         return AZ_INVALID;
+    uint64_t now = az_mcp_clock();
+    mcp_panel_reap(&runtime->panel, now);
+    bool pending = refresh_panel(runtime, now);
     const struct mcp_panel_request *prior = panel_find(&runtime->panel, key);
-    return !strcmp(action, "status") ? panel_poll(runtime, prior, token)
-                                     : panel_press(runtime, args, key, prior, token);
+    return !strcmp(action, "status") ? panel_poll(prior, token)
+                                     : panel_press(runtime, args, key, prior, token, pending);
 }
 
 static int panel_tool(const cmcp_json_t *args, void *user, cmcp_handler_ctx_t *ctx,
@@ -109,7 +143,9 @@ static int panel_tool(const cmcp_json_t *args, void *user, cmcp_handler_ctx_t *c
     (void)is_error;
     struct mcp_runtime *runtime = user;
     uint64_t token = 0;
+    pthread_mutex_lock(&runtime->lock);
     int status = panel_request(runtime, args, &token);
+    pthread_mutex_unlock(&runtime->lock);
     cmcp_json_t *out = mcp_sdk_result(runtime, status);
     if (token)
         mcp_set(out, "deliveryToken", mcp_id(token));

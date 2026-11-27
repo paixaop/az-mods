@@ -4,6 +4,8 @@ Set Planner orders a rekordbox USB playlist using harmonic key, effective BPM, a
 
 Highlight a USB playlist in the deck browser or open its track list. Press the deck’s **MENU** button and tap **Plan Set** in the button row. If the row is full, open **Edit** to find **Plan Set**. Optionally select an opener or closer by playlist position. Leaving either on **Automatic** lets the planner choose that endpoint. Repeated tracks remain distinct playlist entries. **BACK** returns to the browser.
 
+In **Plan set**, tap **Curve** to cycle through presets. Drag the dots to change energy. Interior dots can also move earlier or later in the set. Drag either end dot up or down to set the opening or closing energy. **Reset to preset** discards your edits. The custom curve applies to this planning session. After reviewing an order, tap **Edit curve** and then **Preview set** to run the planner with your changes.
+
 Change defaults under **Mod Menu → Community Mods → Installed → Set Planner → Settings**.
 
 ## Energy source
@@ -18,7 +20,15 @@ Adjacent phrases of the same type merge when they share a beat boundary. Separat
 
 The preview shows the track's waveform score rounded to a whole number on a fixed 0–100 scale. The same analysis selection on a track has the same displayed energy across playlists. An asterisk marks a full-track or waveform-height fallback, and a dash means no usable measurement. The planner uses a separate playlist-relative scale for fitting the set's energy curve, with a neutral value for tracks that lack a waveform score.
 
-The preview highlights a difficult transition on the incoming track's row. **Jump** shows the BPM difference used by the planner when it exceeds the configured tempo warning limit. With half/double tempo enabled, this uses the smallest gap at original, half, or double tempo. **Key clash** flags keys at least four positions apart on the Camelot wheel.
+The **Set overview** plots the planned energy in teal against the dashed target, with BPM and Camelot keys below it. Energy here uses the same 1–10 scale as the planner. Gaps indicate missing measurements. When **Use track duration** is enabled, the horizontal axis shows the cumulative track durations available in the library. Otherwise it shows running order.
+
+For playlists over 60 tracks, the overview groups tracks by position along the set and plots average energy and BPM for each section. The shaded band spans the lowest and highest measured energy in the section. Orange and red bars show the share of transitions with tempo jumps and key clashes.
+
+Tap **Zoom in** to inspect 12 tracks at a time. Use the arrows to move six tracks or drag the scrollbar below the chart to jump to any part of the set. Each track gets an equal amount of space in this view, and the dashed line shows the target energy the planner assigned to each track. **Full set** returns to the overview.
+
+Tap the chart or select a track in **Running order** to inspect the incoming transition. The inspector shows the key move, the original BPM change and the gap used for scoring, and how the incoming track's energy compares with the target. **Before / after** compares key changes, clashes, tempo jumps, and the deviation from the energy target in the USB and planned orders.
+
+Colored markers flag difficult transitions on the incoming track. **Jump** means the BPM gap exceeds the configured tempo warning limit. With half/double tempo enabled, the gap is the smallest difference at original, half, or double tempo. **Key clash** flags keys at least four positions apart on the Camelot wheel.
 
 ## USB cache and playlist changes
 

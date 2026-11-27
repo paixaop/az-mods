@@ -1,13 +1,12 @@
 /* SPDX-License-Identifier: GPL-3.0-only */
 #include "http.h"
+#include "tls.h"
 
 #include <arpa/inet.h>
 #include <errno.h>
 #include <fcntl.h>
-#include <openssl/crypto.h>
-#include <openssl/err.h>
-#include <openssl/pem.h>
-#include <openssl/rand.h>
+#include <mbedtls/platform_util.h>
+#include <psa/crypto.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -60,7 +59,7 @@ static cmcp_json_t *read_config(const char *directory)
     cmcp_json_t *json = NULL;
     if (!ferror(file) && length <= CONFIG_BYTES)
         json = cmcp_json_parse(buffer, length);
-    OPENSSL_cleanse(buffer, sizeof buffer);
+    mbedtls_platform_zeroize(buffer, sizeof buffer);
     fclose(file);
     return json;
 }
@@ -143,7 +142,7 @@ static void cleanse_token(const cmcp_json_t *json)
 {
     const cmcp_json_t *secret = cmcp_json_object_get(json, "token");
     if (secret && secret->type == CMCP_JSON_STRING)
-        OPENSSL_cleanse(secret->str.s, secret->str.len);
+        mbedtls_platform_zeroize(secret->str.s, secret->str.len);
 }
 
 static bool valid_bind(const char *bind)
@@ -168,12 +167,12 @@ bool mcp_load_config(const char *directory, struct mcp_config *config)
 bool mcp_generate_secret(char out[MCP_SECRET_SIZE])
 {
     unsigned char bytes[MCP_TOKEN_BYTES];
-    bool generated = RAND_bytes(bytes, sizeof bytes) == 1;
+    bool generated = psa_generate_random(bytes, sizeof bytes) == PSA_SUCCESS;
     if (generated) {
         for (size_t i = 0; i < sizeof bytes; ++i)
             snprintf(out + 2 * i, 3, "%02x", bytes[i]);
     }
-    OPENSSL_cleanse(bytes, sizeof bytes);
+    mbedtls_platform_zeroize(bytes, sizeof bytes);
     return generated;
 }
 
@@ -229,7 +228,7 @@ static char *config_with_token(cmcp_json_t *json, const char *token)
         return NULL;
     cleanse_token(json);
     if (cmcp_json_object_set(json, "token", replacement) != CMCP_OK) {
-        OPENSSL_cleanse(replacement->str.s, replacement->str.len);
+        mbedtls_platform_zeroize(replacement->str.s, replacement->str.len);
         cmcp_json_free(replacement);
         return NULL;
     }
@@ -246,83 +245,47 @@ bool mcp_replace_token(const char *directory, const char token[MCP_SECRET_SIZE])
         return false;
     size_t length = strlen(text);
     bool saved = length <= CONFIG_BYTES && mcp_save_file(directory, "server.json", text, length, true);
-    OPENSSL_cleanse(text, length);
+    mbedtls_platform_zeroize(text, length);
     free(text);
     return saved;
 }
 
-BIO *mcp_open_pem(const char *directory, const char *name)
+static bool read_pem_data(FILE *file, struct mcp_pem *pem)
 {
+    pem->bytes = malloc(PEM_BYTES_LIMIT + 1);
+    if (!pem->bytes)
+        return false;
+    pem->length = fread(pem->bytes, 1, PEM_BYTES_LIMIT + 1, file);
+    if (ferror(file) || pem->length == 0 || pem->length > PEM_BYTES_LIMIT ||
+        memchr(pem->bytes, '\0', pem->length)) {
+        mcp_free_pem(pem);
+        return false;
+    }
+    pem->bytes[pem->length] = '\0';
+    return true;
+}
+
+bool mcp_read_pem(const char *directory, const char *name, struct mcp_pem *pem)
+{
+    *pem = (struct mcp_pem){0};
     int fd = regular_file(directory, name, PEM_BYTES_LIMIT);
     if (fd < 0)
-        return NULL;
-    BIO *bio = BIO_new_fd(fd, BIO_CLOSE);
-    if (!bio)
-        close(fd);
-    return bio;
-}
-
-static bool tls_chain(SSL_CTX *ctx, BIO *bio)
-{
-    X509 *cert = PEM_read_bio_X509_AUX(bio, NULL, NULL, NULL);
-    bool ok = cert && SSL_CTX_use_certificate(ctx, cert) == 1;
-    X509_free(cert);
-    if (!ok)
         return false;
-    ERR_clear_error();
-    while ((cert = PEM_read_bio_X509(bio, NULL, NULL, NULL))) {
-        ok = SSL_CTX_add1_chain_cert(ctx, cert) == 1;
-        X509_free(cert);
-        if (!ok)
-            return false;
+    FILE *file = fdopen(fd, "rb");
+    if (!file) {
+        close(fd);
+        return false;
     }
-    return ERR_GET_REASON(ERR_peek_last_error()) == PEM_R_NO_START_LINE;
+    bool read = read_pem_data(file, pem);
+    fclose(file);
+    return read;
 }
 
-static int no_password(char *buffer, int size, int writing, void *user)
+void mcp_free_pem(struct mcp_pem *pem)
 {
-    (void)buffer;
-    (void)size;
-    (void)writing;
-    (void)user;
-    return 0;
-}
-
-EVP_PKEY *mcp_read_key(BIO *bio)
-{
-    return bio ? PEM_read_bio_PrivateKey(bio, NULL, no_password, NULL) : NULL;
-}
-
-static bool tls_credentials(SSL_CTX *ctx, const char *directory)
-{
-    BIO *cert = mcp_open_pem(directory, "server.crt");
-    BIO *key = mcp_open_pem(directory, "server.key");
-    EVP_PKEY *private_key = mcp_read_key(key);
-    bool ok = cert && private_key && tls_chain(ctx, cert) &&
-              SSL_CTX_use_PrivateKey(ctx, private_key) == 1 && SSL_CTX_check_private_key(ctx) == 1;
-    ERR_clear_error();
-    EVP_PKEY_free(private_key);
-    BIO_free(cert);
-    BIO_free(key);
-    return ok;
-}
-
-SSL_CTX *mcp_tls_context(void)
-{
-    SSL_CTX *ctx = SSL_CTX_new(TLS_server_method());
-    if (ctx && SSL_CTX_set_min_proto_version(ctx, TLS1_2_VERSION) == 1) {
-        SSL_CTX_set_options(ctx, SSL_OP_NO_RENEGOTIATION | SSL_OP_NO_COMPRESSION | SSL_OP_NO_TICKET);
-        return ctx;
+    if (pem->bytes) {
+        mbedtls_platform_zeroize(pem->bytes, pem->length);
+        free(pem->bytes);
     }
-    SSL_CTX_free(ctx);
-    return NULL;
-}
-
-SSL_CTX *mcp_load_tls(const char *directory)
-{
-    SSL_CTX *ctx = mcp_tls_context();
-    if (ctx && tls_credentials(ctx, directory))
-        return ctx;
-    SSL_CTX_free(ctx);
-    return NULL;
+    *pem = (struct mcp_pem){0};
 }

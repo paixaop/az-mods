@@ -2,20 +2,15 @@
 #include "deck-mcp.h"
 #include "provider/wire.h"
 #include "providers.h"
-#include "vendor/qrcodegen/qrcodegen.h"
 
-#include <openssl/crypto.h>
+#include <mbedtls/platform_util.h>
 #include <stdio.h>
 #include <string.h>
 
-void mcp_token_publish(struct mcp_runtime *runtime, enum mcp_token_status status, const char *token)
+void mcp_token_publish(struct mcp_runtime *runtime, enum mcp_token_status status)
 {
     pthread_mutex_lock(&runtime->lock);
     struct mcp_token_page *page = &runtime->token_page;
-    if (token)
-        memcpy(page->token, token, sizeof page->token);
-    if (status == MCP_TOKEN_UNAVAILABLE)
-        OPENSSL_cleanse(page->token, sizeof page->token);
     page->status = status;
     page->dirty = true;
     pthread_mutex_unlock(&runtime->lock);
@@ -47,7 +42,7 @@ void mcp_pair_offer(struct mcp_runtime *runtime, enum mcp_pair_status status,
 {
     pthread_mutex_lock(&runtime->lock);
     struct mcp_token_page *page = &runtime->token_page;
-    OPENSSL_cleanse(page->pair_code, sizeof page->pair_code);
+    mbedtls_platform_zeroize(page->pair_code, sizeof page->pair_code);
     snprintf(page->pair_url, sizeof page->pair_url, "%s", url ? url : "");
     snprintf(page->pair_code, sizeof page->pair_code, "%s", code ? code : "");
     snprintf(page->fingerprint, sizeof page->fingerprint, "%s", fingerprint ? fingerprint : "");
@@ -66,7 +61,7 @@ enum mcp_pair_action mcp_pair_take_action(struct mcp_runtime *runtime)
 }
 
 struct page_snapshot {
-    char token[MCP_SECRET_SIZE], url[MCP_URL_SIZE];
+    char url[MCP_URL_SIZE];
     char pair_url[MCP_URL_SIZE], pair_code[MCP_PAIR_CODE_SIZE], fingerprint[MCP_FINGERPRINT_SIZE];
     const char *note;
     enum mcp_token_status status;
@@ -80,7 +75,6 @@ static void read_page(struct mcp_runtime *runtime, struct page_snapshot *snapsho
     snapshot->status = page->status;
     snapshot->note = page->connection_note;
     snapshot->pair_status = page->pair_status;
-    memcpy(snapshot->token, page->token, sizeof snapshot->token);
     memcpy(snapshot->url, page->url, sizeof snapshot->url);
     memcpy(snapshot->pair_url, page->pair_url, sizeof snapshot->pair_url);
     memcpy(snapshot->pair_code, page->pair_code, sizeof snapshot->pair_code);
@@ -125,7 +119,7 @@ static size_t token_columns(const az_core_v1 *core, int width, const char *token
     memcpy(first_half, token, 32);
     first_half[32] = '\0';
     bool fits = text_width(core, first_half, 14) <= width && text_width(core, token + 32, 14) <= width;
-    OPENSSL_cleanse(first_half, sizeof first_half);
+    mbedtls_platform_zeroize(first_half, sizeof first_half);
     return fits ? 32 : 16;
 }
 
@@ -138,59 +132,17 @@ static void draw_secret(const az_core_v1 *core, az_draw *draw, az_rect area, con
         memcpy(line, token + offset, columns);
         fit_text(core, draw, area, 24 * (int)(offset / columns), line, AZ_COL_TEXT);
     }
-    OPENSSL_cleanse(line, sizeof line);
-}
-
-static void draw_qr_row(const az_core_v1 *core, az_draw *draw, int x, int y, int row,
-                        int scale, const uint8_t *qr)
-{
-    int size = qrcodegen_getSize(qr);
-    for (int first = 0; first < size;) {
-        if (!qrcodegen_getModule(qr, first, row)) {
-            ++first;
-            continue;
-        }
-        int end = first + 1;
-        while (end < size && qrcodegen_getModule(qr, end, row))
-            ++end;
-        core->fill_rect(draw, x + first * scale, y, (end - first) * scale, scale, 0);
-        first = end;
-    }
-}
-
-static void paint_qr(const az_core_v1 *core, az_draw *draw, az_rect area, const uint8_t *qr)
-{
-    const int border = 4;
-    int size = qrcodegen_getSize(qr);
-    int available = area.w < area.h ? area.w : area.h;
-    int scale = (available < 260 ? available : 260) / (size + 2 * border);
-    if (scale < 2)
-        return;
-    int extent = (size + 2 * border) * scale;
-    core->fill_rect(draw, area.x, area.y, extent, extent, 0xffffff);
-    for (int row = 0; row < size; ++row)
-        draw_qr_row(core, draw, area.x + border * scale, area.y + (row + border) * scale, row, scale, qr);
-}
-
-static void draw_qr(const az_core_v1 *core, az_draw *draw, az_rect area, const char *payload)
-{
-    enum { QR_VERSION = 14 };
-    uint8_t scratch[qrcodegen_BUFFER_LEN_FOR_VERSION(QR_VERSION)], qr[sizeof scratch];
-    if (qrcodegen_encodeText(payload, scratch, qr, qrcodegen_Ecc_MEDIUM, 1, QR_VERSION,
-                             qrcodegen_Mask_AUTO, true))
-        paint_qr(core, draw, area, qr);
-    OPENSSL_cleanse(scratch, sizeof scratch);
-    OPENSSL_cleanse(qr, sizeof qr);
+    mbedtls_platform_zeroize(line, sizeof line);
 }
 
 static bool live_armed(const struct mcp_runtime *runtime)
 {
-    return atomic_load(&runtime->commands.grant) != 0;
+    return mcp_live_grant_generation(runtime, az_mcp_clock()) != 0;
 }
 
 static bool saved_armed(const struct mcp_runtime *runtime)
 {
-    return az_mcp_before(az_mcp_clock(), atomic_load(&runtime->saved_edits));
+    return mcp_saved_grant_generation(runtime, az_mcp_clock()) != 0;
 }
 
 static void draw_arming(struct mcp_runtime *runtime, az_draw *draw, az_rect area, int y)
@@ -201,6 +153,11 @@ static void draw_arming(struct mcp_runtime *runtime, az_draw *draw, az_rect area
     if (runtime->commands.api)
         button(runtime, draw, area, y, MCP_BUTTON_LIVE, page->shown_live ? "Disarm live controls" : "Arm live controls");
     button(runtime, draw, area, y + 48, MCP_BUTTON_SAVED, page->shown_saved ? "Disarm saved edits" : "Arm saved edits");
+}
+
+static bool can_reset_token(enum mcp_token_status status)
+{
+    return status != MCP_TOKEN_UNAVAILABLE && status != MCP_TOKEN_SAVING;
 }
 
 static void draw_home(struct mcp_runtime *runtime, az_draw *draw, az_rect area,
@@ -217,10 +174,9 @@ static void draw_home(struct mcp_runtime *runtime, az_draw *draw, az_rect area,
         return;
     fit_text(core, draw, area, 48, "Pair with Codex using your laptop browser.", AZ_COL_TEXT);
     button(runtime, draw, area, 80, MCP_BUTTON_PAIR, "Pair with Codex");
-    button(runtime, draw, area, 128, MCP_BUTTON_TOKEN, "Show token and manual setup");
-    draw_arming(runtime, draw, area, 184);
-    if (snapshot->token[0] && snapshot->status != MCP_TOKEN_SAVING)
-        button(runtime, draw, area, 288, MCP_BUTTON_RESET, "Reset token");
+    draw_arming(runtime, draw, area, 128);
+    if (can_reset_token(snapshot->status))
+        button(runtime, draw, area, 232, MCP_BUTTON_RESET, "Reset token");
 }
 
 static const char *pair_message(const struct page_snapshot *snapshot)
@@ -248,7 +204,7 @@ static void draw_pair_details(const az_core_v1 *core, az_draw *draw, az_rect are
     char prompt[56];
     snprintf(prompt, sizeof prompt, "Setup code: %s (valid for 2 minutes)", snapshot->pair_code);
     fit_text(core, draw, area, 144, prompt, AZ_COL_TEXT);
-    OPENSSL_cleanse(prompt, sizeof prompt);
+    mbedtls_platform_zeroize(prompt, sizeof prompt);
     if (area.h < 192)
         return;
     fit_text(core, draw, area, 168, "If warned, verify the certificate SHA-256 fingerprint.", AZ_COL_TEXT_DIM);
@@ -271,26 +227,6 @@ static void draw_pair(struct mcp_runtime *runtime, az_draw *draw, az_rect area,
         draw_pair_details(core, draw, area, snapshot);
 }
 
-static void draw_manual(struct mcp_runtime *runtime, az_draw *draw, az_rect area,
-                        const struct page_snapshot *snapshot)
-{
-    const az_core_v1 *core = runtime->core;
-    button(runtime, draw, area, 0, MCP_BUTTON_BACK, "Back");
-    if (area.h < 143)
-        return;
-    fit_text(core, draw, area, 48, snapshot->url, AZ_COL_TEXT);
-    fit_text(core, draw, area, 72, "Streamable HTTP. Enter one bearer token.", AZ_COL_TEXT);
-    fit_text(core, draw, area, 96, snapshot->note ? snapshot->note : "Trust the deck TLS certificate.", AZ_COL_TEXT_DIM);
-    fit_text(core, draw, area, 120, "Scan to copy, or join all token lines without spaces.", AZ_COL_TEXT);
-    size_t columns = token_columns(core, area.w, snapshot->token);
-    int next = 144 + 24 * (int)(64 / columns);
-    if (next <= area.h)
-        draw_secret(core, draw, (az_rect){ area.x, area.y + 144, area.w, area.h - 144 },
-                    snapshot->token, columns);
-    if (snapshot->token[0])
-        draw_qr(core, draw, (az_rect){ area.x, area.y + next, area.w, area.h - next }, snapshot->token);
-}
-
 static void draw_page(az_draw *draw, az_rect area, void *user)
 {
     struct mcp_runtime *runtime = user;
@@ -302,11 +238,9 @@ static void draw_page(az_draw *draw, az_rect area, void *user)
     read_page(runtime, &snapshot);
     if (page->page == MCP_SCREEN_PAIR)
         draw_pair(runtime, draw, area, &snapshot);
-    else if (page->page == MCP_SCREEN_TOKEN)
-        draw_manual(runtime, draw, area, &snapshot);
     else
         draw_home(runtime, draw, area, &snapshot);
-    OPENSSL_cleanse(&snapshot, sizeof snapshot);
+    mbedtls_platform_zeroize(&snapshot, sizeof snapshot);
 }
 
 static bool hit(az_rect area, const az_event *event)
@@ -322,7 +256,7 @@ static void request_pair(struct mcp_runtime *runtime, enum mcp_pair_action actio
     page->pair_action = action;
     page->pair_status = action == MCP_PAIR_START ? MCP_PAIR_PREPARING : MCP_PAIR_IDLE;
     page->pair_url[0] = '\0';
-    OPENSSL_cleanse(page->pair_code, sizeof page->pair_code);
+    mbedtls_platform_zeroize(page->pair_code, sizeof page->pair_code);
     page->fingerprint[0] = '\0';
     pthread_mutex_unlock(&runtime->lock);
 }
@@ -343,7 +277,7 @@ static void regenerate_confirmed(int confirmed, void *user)
     mcp_saved_disarm(runtime);
     pthread_mutex_lock(&runtime->lock);
     struct mcp_token_page *page = &runtime->token_page;
-    if (page->token[0]) {
+    if (can_reset_token(page->status)) {
         page->status = MCP_TOKEN_SAVING;
         page->pair_action = MCP_PAIR_NONE;
         page->page = MCP_SCREEN_PAIR;
@@ -374,9 +308,6 @@ static void activate(struct mcp_runtime *runtime, enum mcp_screen_button which)
     case MCP_BUTTON_PAIR:
         runtime->token_page.page = MCP_SCREEN_PAIR;
         request_pair(runtime, MCP_PAIR_START);
-        break;
-    case MCP_BUTTON_TOKEN:
-        runtime->token_page.page = MCP_SCREEN_TOKEN;
         break;
     case MCP_BUTTON_BACK:
         leave_page(runtime);

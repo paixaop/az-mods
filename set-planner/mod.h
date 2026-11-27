@@ -35,6 +35,21 @@ typedef struct {
     uint32_t encoding;
 } SpInput;
 
+enum { SP_DETAIL_TRACKS = 12, SP_OVERVIEW_LIMIT = 60, SP_OVERVIEW_BINS = 48 };
+
+typedef struct {
+    double energy_total, energy_low, energy_high, bpm_total;
+    unsigned energy_count, bpm_count;
+    unsigned transitions, key_warnings, tempo_warnings;
+} SpChartBin;
+
+typedef struct {
+    double *starts;
+    double duration, bpm_low, bpm_high;
+    bool time_axis, partial_duration;
+    SpChartBin bins[SP_OVERVIEW_BINS];
+} SpTimeline;
+
 typedef struct {
     int stick, playlist;
     char playlist_name[192];
@@ -44,9 +59,11 @@ typedef struct {
     int *target;
     SpMove *moves;
     int move_count, verified;
+    az_playlist_move_result_v1 pending_move;
     int unknown_energy, fallback_energy, cache_hits;
     bool can_resume;
     SpMetrics original, planned;
+    SpTimeline timeline;
 } SpModel;
 
 typedef struct {
@@ -69,6 +86,18 @@ typedef struct {
     int cursor, top, progress_seen;
     az_rect area;
     int visible, row_height;
+    bool compare;
+    bool chart_detail;
+    int chart_first;
+    az_rect arc_plot;
+    az_rect chart_rail;
+    uint32_t drag_generation;
+    uint64_t surface_contact;
+    int surface_x, surface_y;
+    _Atomic uint64_t drag_handles[SP_ARC_POINTS], drag_rail, drag_event;
+    uint64_t drag_contact; /* touch filter thread */
+    int drag_x, drag_y;    /* touch filter thread */
+    bool drag_started;
 } SpRuntime;
 
 double sp_clamp(double value, double low, double high);
@@ -95,6 +124,20 @@ void *sp_worker(void *user);
 void sp_ui_tick(SpRuntime *runtime);
 void sp_redraw(SpRuntime *runtime);
 void sp_close_planner(SpRuntime *runtime);
+bool sp_build_timeline(SpModel *model, const SpOptions *options);
+double sp_chart_boundary(const SpModel *model, int index);
+int sp_chart_track(const SpModel *model, double position);
+double sp_chart_target(const SpRuntime *runtime, int index);
+void sp_chart_page(SpRuntime *r, int direction);
+void sp_chart_scroll_to(SpRuntime *r, double position);
+void sp_chart_follow(SpRuntime *r);
+int sp_chart_pick_index(const SpRuntime *r, double position);
+void sp_reset_drag(SpRuntime *runtime);
+int sp_touch_drag(const az_touch *touch, void *user);
+void sp_publish_anchor(SpRuntime *runtime, int index, int x, int y);
+void sp_publish_rail(SpRuntime *runtime, az_rect rail);
+bool sp_poll_drag(SpRuntime *runtime);
+bool sp_surface_drag(SpRuntime *runtime, const az_event *event);
 extern const az_surface_v1 sp_surface;
 extern const az_screen_v1 sp_screen;
 

@@ -1,24 +1,20 @@
 # Deck MCP
 
-Deck MCP serves `https://<deck-address>:8765/mcp` from an SDK worker inside EP147. It uses cMCP for MCP, JSON, JSON-RPC and schema validation, with Libevent and OpenSSL for HTTPS. It supports stateless Streamable HTTP with the 2026-07-28 and 2025-11-25 protocol revisions. Each POST returns JSON or an empty notification acknowledgement. [Streamable HTTP specification](https://modelcontextprotocol.io/specification/2026-07-28/basic/transports/streamable-http)
+Deck MCP serves `https://<deck-address>:8765/mcp` from an SDK worker inside EP147. It uses cMCP for MCP, JSON, JSON-RPC and schema validation, with Libevent and Mbed TLS for HTTPS. It supports stateless Streamable HTTP with the 2026-07-28 and 2025-11-25 protocol revisions. Each POST returns JSON or an empty notification acknowledgement. [Streamable HTTP specification](https://modelcontextprotocol.io/specification/2026-07-28/basic/transports/streamable-http)
 
 ## First run
 
 1. Enable Deck MCP with the installation USB inserted. Put the deck and the computer running Codex on the same LAN.
 2. Open **Mod Menu → Community Mods → Installed → Deck MCP → Settings → Pair with Codex**.
-3. Open the displayed HTTPS address in the laptop browser. If the browser warns about the deck's certificate, view the server certificate and compare its SHA-256 fingerprint with the one on the deck before entering the code. Ignore capitalization, colons and line breaks when comparing. If your browser or its policy blocks the exception, use the USB files described below.
+3. Open the displayed HTTPS address in the laptop browser. If the browser warns about the deck's certificate, view the server certificate and compare its SHA-256 fingerprint with the one on the deck before entering the code. Ignore capitalization, colons and line breaks when comparing.
 4. Enter the six-digit code shown on the deck, then select **Download connection file**. Keep the deck's pairing screen open until the file is sent. **New setup code** replaces an expired code. Each code lasts two minutes, allows five attempts, and can download the file once.
 5. Ask local Codex on that laptop to set up and verify Deck MCP using `deck-mcp-connection.json` in Downloads. Tell it to follow the Deck MCP README and keep the token private. Reopen Codex when setup finishes.
 
 The downloaded file contains the MCP URL, a bearer token and the public CA for the deck. **Back** cancels the code. **Reset token** disarms live controls and saved edits, saves a new token and displays a new setup code. Re-pair each client after a reset. A failed save leaves the previous token active. The local CA stays on the installation USB and continues to work if the deck's IP changes. Reload the mod and pair again to update the URL after an address change.
 
-### Setup from USB
-
-On the default setup, enable Deck MCP once and note its **Harness URL**. Safely eject the installation USB and plug it into the laptop. Give local Codex the Harness URL and tell it to read `server.json` and `deck-mcp-ca.crt` in `MODS/community-mods/deck-mcp/data/`. The `token` field in `server.json` is the bearer token. Return the USB to the deck to verify the connection. For other clients, **Show token and manual setup** displays the full Harness URL, the bearer token and a QR containing just the token.
-
 ### Configuration instructions for a local coding assistant
 
-Read the connection file locally. Keep its token out of chat, terminal output and shell arguments. Validate that `version` is 1, `transport` is `streamable-http`, and `url` uses HTTPS with the deck's address, port and the path `/mcp`. The `bearerToken` must be 64 hexadecimal characters. For USB setup use the Harness URL and `token` field instead.
+Read the connection file locally. Keep its token out of chat, terminal output and shell arguments. Validate that `version` is 1, `transport` is `streamable-http`, and `url` uses HTTPS with the deck's address, port and the path `/mcp`. The `bearerToken` must be 64 hexadecimal characters.
 
 Store the authorization header as a private JSON file containing the `Authorization` key with the value `Bearer <bearerToken>`. Save the public `caCertificatePem` separately if it is present. Use absolute paths in the user's Codex settings, updating just the Deck MCP entry. On macOS and Linux, a header helper can read the JSON using `/bin/cat`.
 
@@ -67,6 +63,8 @@ For clients that require a legacy handshake, use 2025-11-25. Modern clients send
 
 In **Deck MCP → Settings**, tap **Arm live controls** for live actions or **Arm saved edits** for storage actions. The two grants last up to 15 minutes and can be disarmed from the same page. For cue and loop submissions, pass the current `sessionId`, deck and `loadEpoch`, plus a unique `key`. Set `armGeneration` from `deck_capabilities.armGeneration` for live actions and from `deck_capabilities.savedArmGeneration` for edits. Use the exact revision from `deck_native_cues` for saved targets. Reuse the key and arguments together when retrying. Query `deck_command_status` after queueing to distinguish acceptance from application.
 
+Command, panel, official-setting and provider receipts remain available for 60 seconds after completion. During that window, retrying the same key with the same arguments returns the existing receipt. After the window, submitting the key again can start a fresh operation. Check the current state before resubmitting an action whose receipt has expired.
+
 ## Reorder a USB playlist
 
 Enable **Playlist Editing** on the deck and tap **Arm saved edits** in Deck MCP Settings before submitting a move.
@@ -110,8 +108,8 @@ cp "$deps/out/deck-mcp.so" out/
 "$sdk/tools/azmod-pack" package .
 ```
 
-`vendor/dependencies.mk` pins the archives and checks their SHA-256 hashes. The cMCP patch rejects duplicate JSON keys. The Libevent patch rejects a connection if the TLS factory fails, including when all 12 connection slots are occupied. Manual setup uses the vendored C implementation of [Nayuki QR Code generator v1.8.0](https://github.com/nayuki/QR-Code-generator/tree/v1.8.0/c) for its token QR. The package carries dependency notices under `assets/licenses/`.
+`vendor/dependencies.mk` pins the archives and checks their SHA-256 hashes. The build uses the Mbed TLS backend from Libevent 2.2.2-alpha. The cMCP patch rejects duplicate JSON keys. The Libevent patch closes a connection when creation of its TLS context fails or all 12 connection slots are occupied. The package carries dependency notices under `assets/licenses/`.
 
 To build a provider-enabled Cues, Anchor or Beatport Remember mod, mount this directory's `provider/` at `/provider` alongside the pinned dependency mount, and run that mod's Makefile with `MCP_PROVIDER_DIR=/provider`. Include the cMCP license notice from `assets/licenses/cMCP.txt` under the provider package's `assets/licenses/`. The provider SDK links per mod and serves registrations only within the same EP147 process. See [az-mcp-provider.h](provider/az-mcp-provider.h) for the C interface.
 
-For host testing, build the patched Libevent source against a host OpenSSL installation and pass its install path as `EVENT_PREFIX` and the host OpenSSL path as `TLS_PREFIX`. Run `make unit` with `DEPS`, `EVENT_PREFIX`, `TLS_PREFIX`, `OUT`, and `FIXTURE` set. The fixture directory contains a certificate with IP SAN `127.0.0.1`, its key, and the test listener configuration. The C integration test defines the fixture token and port. It runs the production listener and SDK adapter against a fake SDK. `TEST_CURL_FLAGS` selects the test libcurl and `TEST_FLAGS` accepts sanitizer flags.
+For host testing, run `make -f vendor/dependencies.mk host-libraries DEPS="$deps"` with CMake 3.20.2 or later. Run `make unit` with `DEPS="$deps"`, `TLS_PREFIX="$deps/host"`, `OUT`, and `FIXTURE` set. `EVENT_PREFIX` defaults to `TLS_PREFIX`. The fixture directory contains a certificate with IP SAN `127.0.0.1`, its key, and the test listener configuration. The C integration test defines the fixture token and port. It runs the production listener and SDK adapter against a fake SDK. `TEST_CURL_FLAGS` selects the test libcurl and `TEST_FLAGS` accepts sanitizer flags.

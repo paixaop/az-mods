@@ -1,164 +1,188 @@
 /* SPDX-License-Identifier: GPL-3.0-only */
 #include "http.h"
+#include "tls.h"
 
-#include <openssl/pem.h>
-#include <openssl/rand.h>
-#include <openssl/x509v3.h>
-#include <stdio.h>
+#include <arpa/inet.h>
+#include <mbedtls/oid.h>
+#include <mbedtls/platform_util.h>
+#include <string.h>
+#include <time.h>
 
 #define SETUP_IDENTITY "setup-ca.pem"
 #define DAY_SECONDS 86400L
+#define DATE_BYTES 15
+#define GENERATED_PEM_LIMIT 4096
 
-struct identity {
-    X509 *cert;
-    EVP_PKEY *key;
-};
+static const char authority_name[] = "CN=XDJ-AZ Deck MCP Local CA";
+static const char server_name[] = "CN=XDJ-AZ Deck MCP";
 
-static void free_identity(struct identity *identity)
+static bool generate_key(struct mcp_identity *identity)
 {
-    X509_free(identity->cert);
-    EVP_PKEY_free(identity->key);
+    psa_key_attributes_t attributes = PSA_KEY_ATTRIBUTES_INIT;
+    psa_set_key_type(&attributes, PSA_KEY_TYPE_ECC_KEY_PAIR(PSA_ECC_FAMILY_SECP_R1));
+    psa_set_key_bits(&attributes, 256);
+    psa_set_key_usage_flags(&attributes, PSA_KEY_USAGE_SIGN_HASH | PSA_KEY_USAGE_EXPORT);
+    psa_set_key_algorithm(&attributes, PSA_ALG_ECDSA(PSA_ALG_ANY_HASH));
+    psa_status_t status = psa_generate_key(&attributes, &identity->generated_key);
+    psa_reset_key_attributes(&attributes);
+    return status == PSA_SUCCESS && mbedtls_pk_wrap_psa(&identity->key, identity->generated_key) == 0;
 }
 
-static bool random_serial(X509 *cert)
+static bool set_serial(mbedtls_x509write_cert *writer)
 {
-    unsigned char bytes[16];
-    if (RAND_bytes(bytes, sizeof bytes) != 1)
+    unsigned char serial[16];
+    if (psa_generate_random(serial, sizeof serial) != PSA_SUCCESS)
         return false;
-    BIGNUM *serial = BN_bin2bn(bytes, sizeof bytes, NULL);
-    bool ok = serial && BN_to_ASN1_INTEGER(serial, X509_get_serialNumber(cert));
-    BN_free(serial);
-    return ok;
+    serial[0] = (serial[0] & 0x7f) | 1;
+    return mbedtls_x509write_crt_set_serial_raw(writer, serial, sizeof serial) == 0;
 }
 
-static bool subject_name(X509 *cert, const char *name)
+static bool format_date(time_t timestamp, char result[DATE_BYTES])
 {
-    X509_NAME *subject = X509_get_subject_name(cert);
-    return X509_NAME_add_entry_by_txt(subject, "CN", MBSTRING_ASC,
-                                      (const unsigned char *)name, -1, -1, 0) == 1;
+    struct tm parts;
+    return gmtime_r(&timestamp, &parts) && strftime(result, DATE_BYTES, "%Y%m%d%H%M%S", &parts) == DATE_BYTES - 1;
 }
 
-static bool init_identity(struct identity *identity, const char *name, long days)
+static bool set_validity(mbedtls_x509write_cert *writer, long days)
 {
-    identity->key = EVP_PKEY_Q_keygen(NULL, NULL, "EC", "prime256v1");
-    identity->cert = X509_new();
-    X509 *cert = identity->cert;
-    return cert && identity->key && X509_set_version(cert, 2) == 1 &&
-           random_serial(cert) && subject_name(cert, name) &&
-           X509_gmtime_adj(X509_getm_notBefore(cert), -DAY_SECONDS) &&
-           X509_gmtime_adj(X509_getm_notAfter(cert), days * DAY_SECONDS) &&
-           X509_set_pubkey(cert, identity->key) == 1;
+    time_t now = time(NULL);
+    char before[DATE_BYTES], after[DATE_BYTES];
+    return now != (time_t)-1 && format_date(now - DAY_SECONDS, before) &&
+           format_date(now + days * DAY_SECONDS, after) &&
+           mbedtls_x509write_crt_set_validity(writer, before, after) == 0;
 }
 
-static bool add_extension(X509 *cert, int field, const char *value)
+static bool set_names(mbedtls_x509write_cert *writer, const char *subject, const char *issuer)
 {
-    X509_EXTENSION *extension = X509V3_EXT_conf_nid(NULL, NULL, field, value);
-    bool ok = extension && X509_add_ext(cert, extension, -1) == 1;
-    X509_EXTENSION_free(extension);
-    return ok;
+    return mbedtls_x509write_crt_set_subject_name(writer, subject) == 0 &&
+           mbedtls_x509write_crt_set_issuer_name(writer, issuer) == 0;
 }
 
-static bool sign_certificate(struct identity *identity, const struct identity *issuer)
+static bool write_certificate(mbedtls_x509write_cert *writer, mbedtls_x509_crt *cert)
 {
-    X509_NAME *name = X509_get_subject_name(issuer->cert);
-    return X509_set_issuer_name(identity->cert, name) == 1 &&
-           X509_sign(identity->cert, issuer->key, EVP_sha256()) > 0;
+    unsigned char der[GENERATED_PEM_LIMIT];
+    int length = mbedtls_x509write_crt_der(writer, der, sizeof der);
+    return length > 0 && mbedtls_x509_crt_parse_der(cert, der + sizeof der - (size_t)length, (size_t)length) == 0;
 }
 
-static bool save_pem(const char *directory, const char *name, BIO *pem, bool secret)
+static void set_keys(mbedtls_x509write_cert *writer, mbedtls_pk_context *subject, mbedtls_pk_context *issuer)
 {
-    char *bytes = NULL;
-    long length = BIO_get_mem_data(pem, &bytes);
-    bool saved = length > 0 && mcp_save_file(directory, name, bytes, (size_t)length, false);
-    if (secret && length > 0)
-        OPENSSL_cleanse(bytes, (size_t)length);
-    return saved;
+    mbedtls_x509write_crt_set_version(writer, MBEDTLS_X509_CRT_VERSION_3);
+    mbedtls_x509write_crt_set_md_alg(writer, MBEDTLS_MD_SHA256);
+    mbedtls_x509write_crt_set_subject_key(writer, subject);
+    mbedtls_x509write_crt_set_issuer_key(writer, issuer);
 }
 
-static bool save_authority(const char *directory, const struct identity *authority)
+static bool save_authority(const char *directory, const struct mcp_identity *authority)
 {
-    BIO *pem = BIO_new(BIO_s_mem());
-    bool written = pem && PEM_write_bio_X509(pem, authority->cert) == 1 &&
-        PEM_write_bio_PrivateKey(pem, authority->key, NULL, NULL, 0, NULL, NULL) == 1;
-    bool saved = written && save_pem(directory, SETUP_IDENTITY, pem, true);
-    BIO_free(pem);
-    return saved;
-}
-
-static bool create_authority(const char *directory, struct identity *authority)
-{
-    if (!mcp_file_missing(directory, MCP_SETUP_CA) ||
-        !init_identity(authority, "XDJ-AZ Deck MCP Local CA", 3650))
+    unsigned char pem[GENERATED_PEM_LIMIT];
+    if (!mcp_certificate_pem(&authority->cert, pem, sizeof pem))
         return false;
-    X509 *cert = authority->cert;
-    return add_extension(cert, NID_basic_constraints, "critical,CA:TRUE,pathlen:0") &&
-           add_extension(cert, NID_key_usage, "critical,keyCertSign,cRLSign") &&
-           sign_certificate(authority, authority) && save_authority(directory, authority);
+    size_t length = strlen((const char *)pem);
+    bool written = mbedtls_pk_write_key_pem(&authority->key, pem + length, sizeof pem - length) == 0 &&
+                   mcp_save_file(directory, SETUP_IDENTITY, (const char *)pem, strlen((const char *)pem), false);
+    mbedtls_platform_zeroize(pem, sizeof pem);
+    return written;
 }
 
-static bool load_authority(const char *directory, struct identity *authority)
+static bool make_authority(struct mcp_identity *authority)
 {
-    if (mcp_file_missing(directory, SETUP_IDENTITY))
-        return create_authority(directory, authority);
-    BIO *pem = mcp_open_pem(directory, SETUP_IDENTITY);
-    if (!pem)
+    if (!generate_key(authority))
         return false;
-    authority->cert = PEM_read_bio_X509(pem, NULL, NULL, NULL);
-    authority->key = mcp_read_key(pem);
-    BIO_free(pem);
-    return authority->cert && authority->key &&
-           X509_check_ca(authority->cert) > 0 &&
-           X509_check_private_key(authority->cert, authority->key) == 1;
+    mbedtls_x509write_cert writer;
+    mbedtls_x509write_crt_init(&writer);
+    set_keys(&writer, &authority->key, &authority->key);
+    bool created = set_names(&writer, authority_name, authority_name) && set_serial(&writer) &&
+                   set_validity(&writer, 3650) &&
+                   mbedtls_x509write_crt_set_basic_constraints(&writer, 1, 0) == 0 &&
+                   mbedtls_x509write_crt_set_key_usage(&writer, MBEDTLS_X509_KU_KEY_CERT_SIGN | MBEDTLS_X509_KU_CRL_SIGN) == 0 &&
+                   write_certificate(&writer, &authority->cert);
+    mbedtls_x509write_crt_free(&writer);
+    return created;
 }
 
-static bool export_authority(const char *directory, X509 *cert)
+static bool read_authority(const char *directory, struct mcp_identity *authority)
 {
-    if (!mcp_file_missing(directory, MCP_SETUP_CA)) {
-        BIO *pem = mcp_open_pem(directory, MCP_SETUP_CA);
-        X509 *existing = pem ? PEM_read_bio_X509(pem, NULL, NULL, NULL) : NULL;
-        bool matches = existing && X509_cmp(existing, cert) == 0;
-        X509_free(existing);
-        BIO_free(pem);
-        return matches;
-    }
-    BIO *pem = BIO_new(BIO_s_mem());
-    bool exported = pem && PEM_write_bio_X509(pem, cert) == 1 &&
-                    save_pem(directory, MCP_SETUP_CA, pem, false);
-    BIO_free(pem);
-    return exported;
-}
-
-static bool create_server(struct identity *server, const struct identity *authority, const char *address)
-{
-    char san[20];
-    int length = snprintf(san, sizeof san, "IP:%s", address);
-    if (length < 0 || (size_t)length >= sizeof san || !init_identity(server, "XDJ-AZ Deck MCP", 365))
+    struct mcp_pem pem;
+    if (!mcp_read_pem(directory, SETUP_IDENTITY, &pem))
         return false;
-    X509 *cert = server->cert;
-    return add_extension(cert, NID_basic_constraints, "critical,CA:FALSE") &&
-           add_extension(cert, NID_key_usage, "critical,digitalSignature") &&
-           add_extension(cert, NID_ext_key_usage, "serverAuth") &&
-           add_extension(cert, NID_subject_alt_name, san) && sign_certificate(server, authority);
+    bool parsed = mbedtls_x509_crt_parse(&authority->cert, pem.bytes, pem.length + 1) == 0 &&
+                  mbedtls_pk_parse_key(&authority->key, pem.bytes, pem.length + 1, NULL, 0) == 0;
+    mcp_free_pem(&pem);
+    return parsed && mbedtls_x509_crt_get_ca_istrue(&authority->cert) == 1 &&
+           mcp_identity_matches(authority);
 }
 
-static SSL_CTX *server_context(const struct identity *server)
+static bool load_authority(const char *directory, struct mcp_identity *authority)
 {
-    SSL_CTX *ctx = mcp_tls_context();
-    if (ctx && SSL_CTX_use_certificate(ctx, server->cert) == 1 &&
-        SSL_CTX_use_PrivateKey(ctx, server->key) == 1 && SSL_CTX_check_private_key(ctx) == 1)
-        return ctx;
-    SSL_CTX_free(ctx);
+    if (!mcp_file_missing(directory, SETUP_IDENTITY))
+        return read_authority(directory, authority);
+    return mcp_file_missing(directory, MCP_SETUP_CA) && make_authority(authority) &&
+           save_authority(directory, authority);
+}
+
+static bool authority_matches(const char *directory, const mbedtls_x509_crt *cert)
+{
+    mbedtls_x509_crt existing;
+    mbedtls_x509_crt_init(&existing);
+    bool same = mcp_load_certificate(directory, MCP_SETUP_CA, &existing) &&
+                existing.raw.len == cert->raw.len && memcmp(existing.raw.p, cert->raw.p, cert->raw.len) == 0;
+    mbedtls_x509_crt_free(&existing);
+    return same;
+}
+
+static bool export_authority(const char *directory, const mbedtls_x509_crt *cert)
+{
+    if (!mcp_file_missing(directory, MCP_SETUP_CA))
+        return authority_matches(directory, cert);
+    unsigned char pem[MCP_CERT_PEM_LIMIT];
+    return mcp_certificate_pem(cert, pem, sizeof pem) &&
+           mcp_save_file(directory, MCP_SETUP_CA, (const char *)pem, strlen((const char *)pem), false);
+}
+
+static bool server_usage(mbedtls_x509write_cert *writer, const char *address)
+{
+    struct in_addr ip;
+    if (inet_pton(AF_INET, address, &ip) != 1)
+        return false;
+    mbedtls_x509_san_list san = { .node = {
+        .type = MBEDTLS_X509_SAN_IP_ADDRESS,
+        .san.unstructured_name = { .p = (unsigned char *)&ip, .len = sizeof ip },
+    }};
+    mbedtls_asn1_sequence usage = { .buf = {
+        .tag = MBEDTLS_ASN1_OID, .p = (unsigned char *)MBEDTLS_OID_SERVER_AUTH,
+        .len = MBEDTLS_OID_SIZE(MBEDTLS_OID_SERVER_AUTH),
+    }};
+    return mbedtls_x509write_crt_set_basic_constraints(writer, 0, 0) == 0 &&
+           mbedtls_x509write_crt_set_key_usage(writer, MBEDTLS_X509_KU_DIGITAL_SIGNATURE) == 0 &&
+           mbedtls_x509write_crt_set_ext_key_usage(writer, &usage) == 0 &&
+           mbedtls_x509write_crt_set_subject_alternative_name(writer, &san) == 0;
+}
+
+static bool make_server(struct mcp_identity *server, struct mcp_identity *authority, const char *address)
+{
+    if (!generate_key(server))
+        return false;
+    mbedtls_x509write_cert writer;
+    mbedtls_x509write_crt_init(&writer);
+    set_keys(&writer, &server->key, &authority->key);
+    bool created = set_names(&writer, server_name, authority_name) && set_serial(&writer) &&
+                   set_validity(&writer, 365) && server_usage(&writer, address) &&
+                   write_certificate(&writer, &server->cert);
+    mbedtls_x509write_crt_free(&writer);
+    return created;
+}
+
+struct mcp_tls *mcp_setup_tls(const char *directory, const char *address)
+{
+    struct mcp_identity authority = {0};
+    struct mcp_tls *tls = mcp_tls_new();
+    bool configured = tls && load_authority(directory, &authority) &&
+                      export_authority(directory, &authority.cert) &&
+                      make_server(&tls->identity, &authority, address) && mcp_tls_use_identity(tls);
+    mcp_identity_free(&authority);
+    if (configured)
+        return tls;
+    mcp_tls_free(tls);
     return NULL;
-}
-
-SSL_CTX *mcp_setup_tls(const char *directory, const char *address)
-{
-    struct identity authority = {0}, server = {0};
-    SSL_CTX *ctx = NULL;
-    if (load_authority(directory, &authority) && export_authority(directory, authority.cert) &&
-        create_server(&server, &authority, address))
-        ctx = server_context(&server);
-    free_identity(&server);
-    free_identity(&authority);
-    return ctx;
 }

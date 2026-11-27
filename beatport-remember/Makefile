@@ -60,6 +60,8 @@ endif
 
 ifeq ($(strip $(DEBUG)),1)
 CFLAGS   += -g
+else
+LDFLAGS  += -Wl,--strip-all
 endif
 
 comma := ,
@@ -68,7 +70,7 @@ space := $(subst ,, )
 .PHONY: all clean test test-harness
 all: $(OUT)/$(MOD_ID).so
 
-$(OUT)/$(MOD_ID).so: $(SRCS) $(AZ_SDK_INCLUDE)/azmod-mod.h | $(OUT)
+$(OUT)/$(MOD_ID).so: $(SRCS) $(AZ_SDK_INCLUDE)/azmod-mod.h Makefile | $(OUT)
 	$(CC) $(CFLAGS) $(LDFLAGS) -o $@ $(SRCS) $(LDLIBS)
 
 $(OUT):

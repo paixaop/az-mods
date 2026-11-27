@@ -3,6 +3,7 @@
 
 #include <arpa/inet.h>
 #include <ifaddrs.h>
+#include <mbedtls/platform_util.h>
 #include <net/if.h>
 #include <stdio.h>
 #include <string.h>
@@ -16,8 +17,8 @@ static bool create_config(const char *directory)
     int length = snprintf(json, sizeof json,
                           "{\"bind\":\"auto\",\"port\":8765,\"token\":\"%s\"}\n", token);
     bool saved = mcp_save_file(directory, "server.json", json, (size_t)length, false);
-    OPENSSL_cleanse(token, sizeof token);
-    OPENSSL_cleanse(json, sizeof json);
+    mbedtls_platform_zeroize(token, sizeof token);
+    mbedtls_platform_zeroize(json, sizeof json);
     return saved;
 }
 

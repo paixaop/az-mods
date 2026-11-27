@@ -2,18 +2,28 @@
 DEPS ?= $(abspath ../../temp/deck-mcp-deps)
 SDK_IMAGE ?= az-mods-sdk:1
 SHA256 ?= shasum -a 256
+CMAKE ?= cmake
 JOBS ?= 8
 
 CMCP_REV := af886a13d8ed21cb3db75b9716d87bdfd6c84c8f
-EVENT_VERSION := 2.1.13-stable
-SSL_VERSION := 3.5.9
+EVENT_VERSION := 2.2.2-alpha
+MBED_VERSION := 4.1.1
+CMAKE_VERSION := 3.31.6
 CMCP_SHA := 1c094b6a98e3336844adc54d4d236a8ba7af29bf4f6e0974089d87d888f1cccc
-EVENT_SHA := f7e9383b8c0baa81b687e5b5eecc01beefaf1b19b64151d95ed61647fe7a315c
-SSL_SHA := 603f5602e2eef00d77fbd429d34dcd5822bb301757a1bc9cdb24c670f1eb859a
+EVENT_SHA := 4ab1b369bcb5af0c5971b8ade4e95a2c1326f6d0dc1ba75d620bf0331c3184a8
+MBED_SHA := 3359a349e23db3d5536fcee032ae7b2ecbfc08972fab643089b5cbf2a375c98c
+CMAKE_SHA := b4cc788d63112b2749b40627e719eb5d3b8ed8f00c36d77189f4019cfe64bc9e
+EVENT := libevent-$(EVENT_VERSION)
+MBED := mbedtls-$(MBED_VERSION)
+ARM_CMAKE := cmake-$(CMAKE_VERSION)-linux-aarch64
+COMMON_FLAGS := -DCMAKE_BUILD_TYPE=MinSizeRel -DCMAKE_POSITION_INDEPENDENT_CODE=ON -DCMAKE_INSTALL_LIBDIR=lib
+MBED_FLAGS := -DENABLE_PROGRAMS=OFF -DENABLE_TESTING=OFF
+EVENT_FLAGS := -DEVENT__LIBRARY_TYPE=STATIC -DEVENT__DISABLE_OPENSSL=ON -DEVENT__DISABLE_MBEDTLS=OFF \
+               -DEVENT__DISABLE_TESTS=ON -DEVENT__DISABLE_BENCHMARK=ON -DEVENT__DISABLE_SAMPLES=ON
 
 .DELETE_ON_ERROR:
-.PHONY: fetch arm-libraries
-fetch: $(DEPS)/cmcp/.patched $(DEPS)/libevent/.patched $(DEPS)/openssl/Configure
+.PHONY: fetch arm-libraries host-libraries
+fetch: $(DEPS)/cmcp/.patched $(DEPS)/$(EVENT)/.patched $(DEPS)/$(MBED)/CMakeLists.txt
 
 $(DEPS):
 	mkdir -p "$@"
@@ -22,13 +32,17 @@ $(DEPS)/cmcp.tar.gz: | $(DEPS)
 	curl -fLsS "https://codeload.github.com/Simon-oid/cMCP/tar.gz/$(CMCP_REV)" -o "$@"
 	printf '%s  %s\n' "$(CMCP_SHA)" "$@" | $(SHA256) -c -
 
-$(DEPS)/libevent.tar.gz: | $(DEPS)
-	curl -fLsS "https://github.com/libevent/libevent/releases/download/release-$(EVENT_VERSION)/libevent-$(EVENT_VERSION).tar.gz" -o "$@"
+$(DEPS)/$(EVENT).tar.gz: | $(DEPS)
+	curl -fLsS "https://github.com/libevent/libevent/releases/download/release-$(EVENT_VERSION)/$(EVENT).tar.gz" -o "$@"
 	printf '%s  %s\n' "$(EVENT_SHA)" "$@" | $(SHA256) -c -
 
-$(DEPS)/openssl.tar.gz: | $(DEPS)
-	curl -fLsS "https://github.com/openssl/openssl/releases/download/openssl-$(SSL_VERSION)/openssl-$(SSL_VERSION).tar.gz" -o "$@"
-	printf '%s  %s\n' "$(SSL_SHA)" "$@" | $(SHA256) -c -
+$(DEPS)/$(MBED).tar.bz2: | $(DEPS)
+	curl -fLsS "https://github.com/Mbed-TLS/mbedtls/releases/download/$(MBED)/$(MBED).tar.bz2" -o "$@"
+	printf '%s  %s\n' "$(MBED_SHA)" "$@" | $(SHA256) -c -
+
+$(DEPS)/$(ARM_CMAKE).tar.gz: | $(DEPS)
+	curl -fLsS "https://cmake.org/files/v3.31/$(ARM_CMAKE).tar.gz" -o "$@"
+	printf '%s  %s\n' "$(CMAKE_SHA)" "$@" | $(SHA256) -c -
 
 $(DEPS)/cmcp/.patched: $(DEPS)/cmcp.tar.gz vendor/cmcp.patch
 	mkdir -p "$(@D)"
@@ -36,26 +50,36 @@ $(DEPS)/cmcp/.patched: $(DEPS)/cmcp.tar.gz vendor/cmcp.patch
 	patch -s -d "$(@D)" -p1 -i "$(CURDIR)/vendor/cmcp.patch"
 	touch "$@"
 
-$(DEPS)/libevent/.patched: $(DEPS)/libevent.tar.gz vendor/libevent.patch
+$(DEPS)/$(EVENT)/.patched: $(DEPS)/$(EVENT).tar.gz vendor/libevent.patch
 	mkdir -p "$(@D)"
 	tar -xf "$<" -C "$(@D)" --strip-components 1
 	patch -s -d "$(@D)" -p1 -i "$(CURDIR)/vendor/libevent.patch"
 	touch "$@"
 
-$(DEPS)/openssl/Configure: $(DEPS)/openssl.tar.gz
+$(DEPS)/$(MBED)/CMakeLists.txt: $(DEPS)/$(MBED).tar.bz2
 	mkdir -p "$(@D)"
 	tar -xf "$<" -C "$(@D)" --strip-components 1
 	touch "$@"
 
-arm-libraries: fetch
-	docker run --rm --platform linux/arm64 --user root -v "$(DEPS):/deps" "$(SDK_IMAGE)" sh -ec '\
-	    apt-get update && apt-get install -y --no-install-recommends perl; \
-	    cd /deps/openssl; \
-	    ./Configure linux-aarch64 no-shared no-tests no-module no-dso no-legacy no-asm \
-	        -fPIC --prefix=/deps/arm --libdir=lib; \
-	    make -j $(JOBS) build_libs; make install_dev; \
-	    cd /deps/libevent; \
-	    CPPFLAGS=-I/deps/arm/include LDFLAGS=-L/deps/arm/lib LIBS="-lssl -lcrypto -ldl -pthread" \
-	        CFLAGS="-O2 -fPIC" ./configure --disable-shared --enable-static --disable-samples \
-	        --disable-libevent-regress --prefix=/deps/arm; \
-	    make -j $(JOBS); make install'
+$(DEPS)/$(ARM_CMAKE)/bin/cmake: $(DEPS)/$(ARM_CMAKE).tar.gz
+	mkdir -p "$(DEPS)/$(ARM_CMAKE)"
+	tar -xf "$<" -C "$(DEPS)/$(ARM_CMAKE)" --strip-components 1
+	touch "$@"
+
+arm-libraries: fetch $(DEPS)/$(ARM_CMAKE)/bin/cmake
+	docker run --rm --platform linux/arm64 -v "$(DEPS):/deps" "$(SDK_IMAGE)" sh -ec '\
+	    cmake=/deps/$(ARM_CMAKE)/bin/cmake; \
+	    "$$cmake" -S /deps/$(MBED) -B /deps/build-mbed-arm $(COMMON_FLAGS) $(MBED_FLAGS) -DCMAKE_INSTALL_PREFIX=/deps/arm; \
+	    "$$cmake" --build /deps/build-mbed-arm -j $(JOBS); "$$cmake" --install /deps/build-mbed-arm; \
+	    "$$cmake" -S /deps/$(EVENT) -B /deps/build-event-arm $(COMMON_FLAGS) $(EVENT_FLAGS) \
+	        -DCMAKE_INSTALL_PREFIX=/deps/arm -DMBEDTLS_ROOT_DIR=/deps/arm -DMBEDTLS_USE_STATIC_LIBS=ON; \
+	    "$$cmake" --build /deps/build-event-arm -j $(JOBS); "$$cmake" --install /deps/build-event-arm'
+
+host-libraries: fetch
+	$(CMAKE) -S "$(DEPS)/$(MBED)" -B "$(DEPS)/build-mbed-host" $(COMMON_FLAGS) $(MBED_FLAGS) -DCMAKE_INSTALL_PREFIX="$(DEPS)/host"
+	$(CMAKE) --build "$(DEPS)/build-mbed-host" -j $(JOBS)
+	$(CMAKE) --install "$(DEPS)/build-mbed-host"
+	$(CMAKE) -S "$(DEPS)/$(EVENT)" -B "$(DEPS)/build-event-host" $(COMMON_FLAGS) $(EVENT_FLAGS) \
+	    -DCMAKE_INSTALL_PREFIX="$(DEPS)/host" -DMBEDTLS_ROOT_DIR="$(DEPS)/host" -DMBEDTLS_USE_STATIC_LIBS=ON
+	$(CMAKE) --build "$(DEPS)/build-event-host" -j $(JOBS)
+	$(CMAKE) --install "$(DEPS)/build-event-host"

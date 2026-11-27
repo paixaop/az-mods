@@ -23,7 +23,7 @@ def main():
         (1280, 420, "groups", "dark"), (1280, 420, "phrase", "dark"),
         (1280, 420, "absolute", "dark"), (1280, 420, "global", "day"),
         (800, 420, "group", "dark"), (480, 240, "global", "day"),
-        (480, 240, "keyboard", "dark"), (240, 180, "phrase", "dark"),
+        (240, 180, "phrase", "dark"),
     ):
         base = destination / f"cues-{width}x{height}-{mode}-{theme}"
         subprocess.run([str(ROOT / "out/render_settings"), str(base.with_suffix(".json")),

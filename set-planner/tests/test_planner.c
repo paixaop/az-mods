@@ -1,6 +1,6 @@
 /* SPDX-License-Identifier: GPL-3.0-only */
 #define _XOPEN_SOURCE 700
-#include "mod.h"
+#include "ui.h"
 #include <assert.h>
 #include <dirent.h>
 #include <ftw.h>
@@ -18,6 +18,8 @@ static uint32_t length;
 static uint64_t revision, generation;
 static const az_screen_v1 *registered;
 static const az_surface_v1 *planner;
+static az_touch_fn touch_action;
+static void *touch_user;
 static az_plan_set_fn menu_action;
 static void *menu_user;
 static az_rect planner_area;
@@ -26,11 +28,12 @@ static int current_view = AZ_VIEW_BROWSE;
 static unsigned cfg_changes;
 static pthread_t worker;
 static char drive[512], data[512];
-static bool have_data = true, wave_missing, busy_release, busy_order;
+static bool have_data = true, wave_missing, busy_release;
 static bool changed_page, bad_row, bad_tracks, no_phrases, cancel_wave;
 static bool roster_mismatch, wave_invalid, short_map, unfinished_wave, silent_wave, long_title;
 static uint32_t wave_format;
 static unsigned requests, waves, moves, fail_sync, redraws, pending;
+static unsigned busy_order, busy_after_move;
 static az_playlist_move_v1 saved;
 static uint64_t receipt, tracked_ticket;
 static void (*confirmation)(int, void *);
@@ -49,7 +52,8 @@ static void fixture(uint32_t count)
     generation = 2;
     receipt = 0;
     requests = waves = moves = fail_sync = 0;
-    wave_missing = busy_release = busy_order = false;
+    wave_missing = busy_release = false;
+    busy_order = busy_after_move = 0;
     changed_page = bad_row = bad_tracks = no_phrases = cancel_wave = false;
     roster_mismatch = wave_invalid = short_map = unfinished_wave = false;
     silent_wave = long_title = false;
@@ -109,7 +113,7 @@ static int order(const char *id, int stick, uint32_t list, uint32_t offset,
 {
     assert(strcmp(id, SP_ID) == 0 && stick == 0 && list > 0);
     if (busy_order) {
-        busy_order = false;
+        --busy_order;
         return AZ_BUSY;
     }
     *out = (az_playlist_order_v1){.size = sizeof *out, .version = AZ_DATA_VERSION,
@@ -272,7 +276,8 @@ static int move_status(const char *id, uint64_t number, az_playlist_move_result_
     entries[to] = row;
     ++moves;
     ++revision;
-    busy_order = true;
+    busy_order = busy_after_move ? busy_after_move : 1;
+    busy_after_move = 0;
     *result = (az_playlist_move_result_v1){.size = sizeof *result, .version = AZ_DATA_VERSION,
         .status = AZ_OK, .outcome = AZ_PLAYLIST_MOVED,
         .device_library = moves == fail_sync ? AZ_PDB_FAILED : AZ_PDB_CURRENT};
@@ -417,6 +422,21 @@ static int ui_theme(void) { return planner_visible ? 0 : 2; }
 static int text_width(const char *label, int px) { return (int)strlen(label) * px / 2; }
 static int row_height(az_draw *draw) { (void)draw; return 48; }
 
+static int register_touch(const char *id, az_touch_fn callback, void *user)
+{
+    assert(strcmp(id, SP_ID) == 0 && callback && user);
+    touch_action = callback;
+    touch_user = user;
+    return 0;
+}
+
+static void draw_line(az_draw *draw, int x, int y, int end, int next, int width, uint32_t color)
+{
+    (void)draw; (void)color;
+    assert(x >= 0 && x < 1280 && end >= 0 && end < 1280);
+    assert(y >= 0 && y < 800 && next >= 0 && next < 800 && width > 0);
+}
+
 static const az_core_v1 core = {.size = sizeof core, .library_service = get_library,
     .data_dir = data_dir, .register_screen = register_screen, .thread_start = thread_start,
     .confirm = confirm, .draw_text = draw_text, .fill_rect = fill_rect,
@@ -424,7 +444,8 @@ static const az_core_v1 core = {.size = sizeof core, .library_service = get_libr
     .text_width = text_width, .row_height = row_height, .ui_theme = ui_theme,
     .surface_create = make_surface, .surface_place = place_surface, .surface_show = show_surface,
     .surface_focus = focus_surface, .surface_redraw = redraw_surface, .view = view,
-    .on_plan_set = register_plan, .plan_set_resolve = resolve_target};
+    .on_plan_set = register_plan, .plan_set_resolve = resolve_target,
+    .touch_filter = register_touch, .draw_line = draw_line};
 
 static SpRuntime direct_runtime(void)
 {
@@ -729,6 +750,8 @@ static void click_row(int index)
         return;
     }
     int top = page == SP_PICK_START || page == SP_PICK_END ? 92 : 56;
+    if (planner_visible && page == SP_SETUP)
+        top = 163;
     assert(input(AZ_EV_TAP, 0, top + index * 48));
 }
 
@@ -852,12 +875,27 @@ static void test_transition_display(const az_mod_v1 *mod)
     assert(metrics.tempo_jumps == 2 && metrics.key_warnings == 3 && metrics.compatible == 1);
     assert(metrics.unknown_bpm == 1 && metrics.unknown_keys == 1);
     assert(metrics.max_bpm == 20 && metrics.max_raw_bpm == 80);
-    screen_draw("\n100.0\n8A\n");
-    screen_draw("\n120.0\nJump 20.0\n9A\n");
-    screen_draw("\n123.0\n2A\nKey clash\n");
-    screen_draw("\n60.0\n8A\nKey clash\n");
-    screen_draw("\n140.0\nJump 20.0\n2A\nKey clash\n");
+    screen_draw("100.0 to 120.0 BPM (+20.0%)  /  Jump 20.0 BPM gap");
+    SpReviewLayout layout = sp_review_layout(running);
+    int row_y = layout.list.y + SP_LIST_HEADER - planner_area.y + 20;
+    assert(input_at(AZ_EV_TAP, 0, layout.list.x + 100, row_y + 2 * SP_ROW));
+    screen_draw("9A  >  2A   /   Key clash");
+    assert(input_at(AZ_EV_TAP, 0, layout.list.x + 100, row_y + 3 * SP_ROW));
+    screen_draw("123.0 to 60.0 BPM (-51.2%)  /  3.0 BPM gap");
+    assert(input_at(AZ_EV_TAP, 0, layout.list.x + 100, row_y + 4 * SP_ROW));
+    screen_draw("60.0 to 140.0 BPM (+133.3%)  /  Jump 20.0 BPM gap");
+    assert(input_at(AZ_EV_TAP, 0, layout.list.x + 100, row_y + 5 * SP_ROW));
+    screen_draw("BPM unavailable");
     screen_draw("\n-\n-\n");
+    int detail_y = layout.detail.y - planner_area.y + 21;
+    assert(input_at(AZ_EV_TAP, 0, layout.detail.x + 250, detail_y));
+    screen_draw("Energy deviation (RMS)");
+    assert(input(AZ_EV_KNOB, -1, 0) && !running->compare);
+    assert(input(AZ_EV_CLICK, 0, 0) && running->compare);
+    assert(input_at(AZ_EV_TAP, 0, layout.detail.x + 50, detail_y) && !running->compare);
+    assert(input_at(AZ_EV_TAP, 0, layout.plot.x + layout.plot.w,
+                    layout.plot.y - planner_area.y + 12));
+    assert(running->cursor == (int)length);
 
     az_rect full_area = planner_area;
     planner_area.h = 240;
@@ -868,6 +906,171 @@ static void test_transition_display(const az_mod_v1 *mod)
     screen_draw("\n60.0\nJump 63.0\n8A\nKey clash\n");
     planner_area = full_area;
     assert(input(AZ_EV_BACK, 0, 0) && input(AZ_EV_BACK, 0, 0));
+}
+
+static int touch(int x, int y, int down)
+{
+    az_touch event = {0, x, y, down};
+    return touch_action(&event, touch_user);
+}
+
+static int tap_box(az_rect box)
+{
+    return input_at(AZ_EV_TAP, 0, box.x + box.w / 2, box.y - planner_area.y + box.h / 2);
+}
+
+static void test_zoom_ui(const az_mod_v1 *mod)
+{
+    fixture(LARGE);
+    preview_playlist(mod, 44, "Long set");
+    screen_draw("Avg. energy");
+    const SpTimeline *timeline = &running->model.timeline;
+    unsigned energy_count = 0, bpm_count = 0;
+    for (int i = 0; i < SP_OVERVIEW_BINS; ++i) {
+        const SpChartBin *bin = &timeline->bins[i];
+        energy_count += bin->energy_count;
+        bpm_count += bin->bpm_count;
+        assert(bin->energy_low <= bin->energy_high);
+    }
+    assert(energy_count == LARGE && bpm_count == LARGE);
+
+    SpReviewLayout layout = sp_review_layout(running);
+    assert(tap_box(layout.plot) && running->cursor == LARGE / 2 + 1);
+    assert(tap_box(layout.zoom));
+    screen_draw("Set detail");
+    layout = sp_review_layout(running);
+    int start = running->chart_first;
+    assert(start == LARGE / 2 - SP_DETAIL_TRACKS / 2);
+    assert(tap_box(layout.right) && running->chart_first == start + SP_DETAIL_TRACKS / 2);
+    assert(tap_box(layout.left) && running->chart_first == start);
+
+    int y = layout.rail.y + layout.rail.h / 2, x = layout.rail.x;
+    assert(touch(x + layout.rail.w / 2, y, 1) == AZ_TOUCH_TAKE);
+    assert(touch(x + layout.rail.w - 1, y, 1) == AZ_TOUCH_TAKE);
+    mod->tick();
+    assert(running->chart_first == LARGE - SP_DETAIL_TRACKS);
+    assert(touch(x + layout.rail.w - 1, y, 0) == AZ_TOUCH_TAKE);
+    mod->tick();
+    screen_draw("#135");
+    assert(input_at(AZ_EV_TAP, 0, layout.plot.x + layout.plot.w / 2 + 1,
+                    layout.plot.y - planner_area.y + 10));
+    assert(running->cursor == LARGE - SP_DETAIL_TRACKS / 2 + 1);
+
+    assert(input_at(AZ_EV_DOWN, 0, x + layout.rail.w / 2, y - planner_area.y));
+    assert(input_at(AZ_EV_UP, 0, x, y - planner_area.y));
+    assert(running->chart_first == 0);
+    assert(input(AZ_EV_KNOB, 1, 0) && running->chart_first > 0);
+    assert(tap_box(layout.rail));  /* Surfaces may deliver a tap without a drag. */
+    assert(tap_box(layout.zoom));
+    screen_draw("Set overview");
+    assert(!running->chart_detail && touch(x + 20, y, 1) == AZ_TOUCH_PASS);
+    assert(input(AZ_EV_BACK, 0, 0) && input(AZ_EV_BACK, 0, 0));
+}
+
+static void test_timeline_axes(void)
+{
+    SpTrack tracks[] = {
+        {.duration = 180, .bpm = 130, .energy = 8, .energy_known = true, .key = 9},
+        {.duration = 60, .bpm = 120, .energy = 2, .energy_known = true, .key = 8},
+        {.duration = 0, .bpm = 0, .energy = 5}
+    };
+    int order[] = {1, 0, 2};
+    SpRuntime r = direct_runtime();
+    r.options.curve = SP_OPENING;
+    r.model.source.identity.total = 3;
+    r.model.tracks = tracks;
+    r.model.target = order;
+    assert(sp_build_timeline(&r.model, &r.options));
+    SpTimeline *timeline = &r.model.timeline;
+    assert(timeline->time_axis && timeline->partial_duration);
+    assert(timeline->duration == 240 && timeline->bpm_low == 120 && timeline->bpm_high == 130);
+    assert(sp_chart_boundary(&r.model, 1) == 0.25);
+    assert(sp_chart_track(&r.model, 0.24) == 0 && sp_chart_track(&r.model, 0.25) == 1);
+    assert(sp_chart_track(&r.model, 1) == 2);
+    assert(sp_chart_target(&r, 0) == 2.5 && sp_chart_target(&r, 1) == 4.5);
+    assert(r.model.planned.energy_error != r.model.original.energy_error);
+    free(timeline->starts);
+    *timeline = (SpTimeline){0};
+
+    r.options.time_aware = false;
+    assert(sp_build_timeline(&r.model, &r.options));
+    assert(!timeline->time_axis && timeline->duration == 240);
+    assert(sp_chart_track(&r.model, 0.25) == 0 && sp_chart_track(&r.model, 0.34) == 1);
+    assert(sp_chart_target(&r, 0) == 2 && sp_chart_target(&r, 1) == 4);
+    free(timeline->starts);
+}
+
+static void test_curve_editor(const az_mod_v1 *mod)
+{
+    fixture(SMALL);
+    notify_action(44, true, "Party");
+    finish(mod, AZ_OK);
+    screen_draw("Drag the dots");
+    SpSetupLayout layout = sp_setup_layout(planner_area);
+    az_rect plot = layout.plot;
+    int middle = plot.x + plot.w / 2;
+    int y = plot.y + (int)lround(plot.h * 5.0 / 9);
+    assert(touch(plot.x + 100, plot.y + 80, 1) == AZ_TOUCH_PASS);
+    assert(touch(middle, y, 1) == AZ_TOUCH_TAKE);
+    assert(touch(middle + 90, y - 42, 1) == AZ_TOUCH_TAKE);
+    mod->tick();
+    screen_draw("Curve: Custom");
+    assert(running->options.custom_arc.points[1].position > 0.6);
+    assert(running->options.custom_arc.points[1].energy > 7.0);
+    assert(touch(plot.x + plot.w + 10, plot.y - 30, 0) == AZ_TOUCH_TAKE);
+    mod->tick();
+    screen_draw("Reset to preset");
+    assert(fabs(running->options.custom_arc.points[1].position - 0.92) < 0.001);
+    assert(running->options.custom_arc.points[1].energy == 10);
+
+    click_row(2);
+    finish(mod, AZ_OK);
+    screen_draw("Custom curve");
+    SpModel *model = &running->model;
+    assert(model->original.energy_error > 0);
+    double target = sp_chart_target(running, 0);
+    SpOptions preset = running->options;
+    preset.custom_arc = (SpArc){0};
+    assert(fabs(model->original.energy_error -
+                sp_measure(model->tracks, (int)length, NULL, &preset).energy_error) > 0.001);
+    assert(target > 5 && target <= 10);
+    assert(input_at(AZ_EV_TAP, 0, 930, 22));
+    screen_draw("Curve: Custom");
+    assert(touch(plot.x + (int)lround(plot.w * 0.92), plot.y, 1) == AZ_TOUCH_TAKE);
+    assert(input_at(AZ_EV_TAP, 0, layout.reset.x + 10, layout.reset.y - planner_area.y + 10));
+    assert(touch(middle, y, 0) == AZ_TOUCH_TAKE);
+    mod->tick();
+    screen_draw("Curve: Closing");
+    assert(!running->options.custom_arc.count);
+
+    int endpoint_y = plot.y + (int)lround(plot.h * 2.0 / 9) - planner_area.y;
+    assert(input_at(AZ_EV_DOWN, 0, plot.x, endpoint_y));
+    assert(input_at(AZ_EV_TAP, 0, plot.x, endpoint_y));
+    assert(input_at(AZ_EV_UP, 0, plot.x + 100, endpoint_y + 35));
+    screen_draw("Curve: Custom");
+    assert(running->options.custom_arc.points[0].position == 0);
+    assert(running->options.custom_arc.points[0].energy < 7);
+    assert(input_at(AZ_EV_TAP, 0, layout.preset.x + 10, layout.preset.y - planner_area.y + 10));
+    screen_draw("Curve: Full night");
+    assert(!running->options.custom_arc.count);
+    assert(input(AZ_EV_BACK, 0, 0));
+    assert(touch(plot.x, y, 1) == AZ_TOUCH_PASS);
+}
+
+static void test_back_with_pending_move(const az_mod_v1 *mod)
+{
+    fixture(SMALL);
+    notify_action(44, true, "Party");
+    finish(mod, AZ_OK);
+    pin_tracks();
+    click_row(2);
+    finish(mod, AZ_OK);
+    busy_after_move = 100;
+    click_row(0);
+    respond(1);
+    finish(mod, AZ_BUSY);
+    assert(moves == 1 && !running->model.verified);
+    assert(input(AZ_EV_BACK, 0, 0) && !planner_visible && !planner_focus);
 }
 
 static void test_screen(void)
@@ -921,6 +1124,7 @@ static void test_screen(void)
     finish(mod, AZ_STALE);
     assert(moves == 0);
     screen_draw("playlist changed");
+    assert(strstr(drawn, "Reopen playlist to save") && !strstr(drawn, "Order already matches"));
     assert(input(AZ_EV_BACK, 0, 0));
     assert(input(AZ_EV_BACK, 0, 0) && !planner_visible && !planner_focus);
     notify_action(44, true, NULL);
@@ -935,6 +1139,12 @@ static void test_screen(void)
     for (int i = 0; i < SMALL; ++i)
         expected[i] = entries[running->model.target[i]];
     fail_sync = 1;
+    busy_after_move = 100;
+    click_row(0);
+    respond(1);
+    finish(mod, AZ_BUSY);
+    screen_draw("Resume saving");
+    assert(moves == 1 && !running->model.verified && running->model.can_resume);
     click_row(0);
     respond(1);
     finish(mod, AZ_FAILED);
@@ -949,8 +1159,11 @@ static void test_screen(void)
     for (int i = 0; i < SMALL; ++i)
         assert(entries[i].entry_id == expected[i].entry_id);
     assert(input(AZ_EV_BACK, 0, 0) && !planner_visible && !planner_focus);
+    test_back_with_pending_move(mod);
     test_display_energy(mod);
     test_transition_display(mod);
+    test_curve_editor(mod);
+    test_zoom_ui(mod);
     notify_action(44, true, "Party");
     finish(mod, AZ_OK);
     current_view = AZ_VIEW_SOURCE;
@@ -981,6 +1194,7 @@ int main(void)
     assert(mkdir(drive, 0700) == 0 && mkdir(mods, 0700) == 0 && mkdir(community, 0700) == 0);
     assert(mkdir(plugin, 0700) == 0 && mkdir(data, 0700) == 0);
     test_algorithm();
+    test_timeline_axes();
     test_library();
     test_energy();
     test_cache();

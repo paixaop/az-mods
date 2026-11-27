@@ -2,6 +2,7 @@
 static pthread_t library_worker;
 static int setting_value;
 static unsigned panel_presses, batch_submissions;
+static atomic_bool hold_panel;
 static void (*confirmation)(int, void *);
 static void *confirmation_user;
 
@@ -40,7 +41,9 @@ static int button_press(const char *id, uint32_t button, uint32_t hold, uint64_t
 static int button_poll(const char *id, uint64_t token)
 {
     assert(!strcmp(id, MCP_ID));
-    return token == panel_presses ? AZ_OK : AZ_STALE;
+    if (token != panel_presses)
+        return AZ_STALE;
+    return atomic_load(&hold_panel) ? AZ_PENDING : AZ_OK;
 }
 
 static int native_bank(int deck, az_native_cue_snapshot *out)
@@ -57,9 +60,21 @@ static int confirm(const char *id, const char *title, const char *message, const
                    void (*callback)(int, void *), void *user)
 {
     assert(!strcmp(id, MCP_ID) && title[0] && message[0] && yes[0] && callback);
+    if (confirmation)
+        return -1;
     confirmation = callback;
     confirmation_user = user;
     return AZ_OK;
+}
+
+static void answer_confirmation(int accepted)
+{
+    assert(confirmation);
+    void (*callback)(int, void *) = confirmation;
+    void *user = confirmation_user;
+    confirmation = NULL;
+    confirmation_user = NULL;
+    callback(accepted, user);
 }
 
 static int submit_batch(const char *id, const az_cue_batch_request *request,
@@ -220,10 +235,12 @@ static int vocal_loaded(const char *id, int deck, uint64_t epoch, az_vocal_snaps
     return vocal_intervals(id, &track, out, rows, max);
 }
 
+static uint64_t analysis_last_job = 90;
+
 static int analysis_request(const char *id, const az_analysis_request_v1 *request, uint64_t *job)
 {
     assert(!strcmp(id, MCP_ID) && request->load_epoch == 106 && request->deck == 3);
-    *job = 91;
+    *job = ++analysis_last_job;
     return AZ_OK;
 }
 
@@ -249,7 +266,7 @@ static int analysis_result(const char *id, uint64_t job, az_analysis_result_v1 *
 
 static int analysis_control(const char *id, uint64_t job)
 {
-    assert(!strcmp(id, MCP_ID) && job == 91);
+    assert(!strcmp(id, MCP_ID) && job > 90 && job <= analysis_last_job);
     return AZ_OK;
 }
 

@@ -6,12 +6,19 @@
 
 #include <stdio.h>
 #include <string.h>
-#include <time.h>
 
 #define NS_PER_SECOND UINT64_C(1000000000)
 #define ARM_SECONDS 900
 
-static uint64_t monotonic_ns(void);
+uint64_t mcp_receipt_deadline(uint64_t now)
+{
+    return now + MCP_RECEIPT_SECONDS * AZ_MCP_NS;
+}
+
+bool mcp_receipt_expired(uint64_t now, uint64_t deadline)
+{
+    return now && deadline && !az_mcp_before(now, deadline);
+}
 
 static az_command_result command_result(void)
 {
@@ -39,13 +46,13 @@ void mcp_commands_disarm(void *user)
 void mcp_commands_arm(struct mcp_runtime *runtime)
 {
     struct mcp_commands *commands = &runtime->commands;
-    if (!commands->api || atomic_load(&commands->grant) || commands->generation == UINT32_MAX)
+    uint64_t now = az_mcp_clock();
+    if (!commands->api || !now || mcp_live_grant_generation(runtime, now) || commands->generation == UINT32_MAX)
         return;
-    uint64_t now = monotonic_ns();
-    if (now) {
-        commands->arm_deadline = now + ARM_SECONDS * NS_PER_SECOND;
-        atomic_store(&commands->grant, ++commands->generation);
-    }
+    /* An expired grant must not inherit the new deadline between these stores. */
+    mcp_commands_disarm(runtime);
+    atomic_store(&commands->arm_deadline, now + ARM_SECONDS * NS_PER_SECOND);
+    atomic_store(&commands->grant, ++commands->generation);
 }
 
 static bool has_commands(const az_commands_v1 *api)
@@ -61,8 +68,10 @@ void mcp_commands_init(struct mcp_runtime *runtime)
     commands->api = NULL;
     commands->count = 0;
     commands->generation = 0;
+    commands->replacement_open = false;
     commands->active = (struct mcp_active_job){0};
     atomic_store(&commands->grant, 0);
+    atomic_store(&commands->arm_deadline, 0);
     const az_core_v1 *core = runtime->core;
     if (!AZ_HAS(core, command_service) ||
         !AZ_OBSERVATION_HAS(runtime->observation, command_target))
@@ -72,8 +81,24 @@ void mcp_commands_init(struct mcp_runtime *runtime)
         commands->api = api;
 }
 
-static struct mcp_job *find_job(struct mcp_commands *commands, const char *key)
+void mcp_commands_reap(struct mcp_commands *commands, uint64_t now)
 {
+    size_t kept = 0;
+    for (size_t i = 0; i < commands->count; ++i) {
+        if (mcp_receipt_expired(now, commands->jobs[i].collect_until))
+            continue;
+        if (commands->active.present && commands->active.index == i)
+            commands->active.index = kept;
+        if (kept != i)
+            commands->jobs[kept] = commands->jobs[i];
+        ++kept;
+    }
+    commands->count = kept;
+}
+
+static struct mcp_job *find_job(struct mcp_commands *commands, const char *key, uint64_t now)
+{
+    mcp_commands_reap(commands, now);
     for (size_t i = 0; i < commands->count; ++i)
         if (!strcmp(commands->jobs[i].intent.key, key))
             return &commands->jobs[i];
@@ -97,13 +122,34 @@ static bool same_intent(const struct mcp_intent *a, const struct mcp_intent *b)
            a->classification == b->classification && a->rgb == b->rgb && same_parameters(a, b);
 }
 
-unsigned mcp_command_grant(const struct mcp_runtime *runtime, const struct mcp_intent *intent)
+static unsigned command_grant_at(const struct mcp_runtime *runtime, const struct mcp_intent *intent,
+                                 uint64_t now)
 {
     if (!(intent->flags & AZ_COMMAND_PERSIST))
-        return atomic_load(&runtime->commands.grant);
-    if (!az_mcp_before(az_mcp_clock(), atomic_load(&runtime->saved_edits)))
+        return mcp_live_grant_generation(runtime, now);
+    return mcp_saved_grant_generation(runtime, now);
+}
+
+unsigned mcp_command_grant(const struct mcp_runtime *runtime, const struct mcp_intent *intent)
+{
+    return command_grant_at(runtime, intent, az_mcp_clock());
+}
+
+unsigned mcp_live_grant_generation(const struct mcp_runtime *runtime, uint64_t now)
+{
+    const struct mcp_commands *commands = &runtime->commands;
+    unsigned generation = atomic_load(&commands->grant);
+    if (!az_mcp_before(now, atomic_load(&commands->arm_deadline)))
         return 0;
-    return atomic_load(&runtime->saved_generation);
+    return generation == atomic_load(&commands->grant) ? generation : 0;
+}
+
+unsigned mcp_saved_grant_generation(const struct mcp_runtime *runtime, uint64_t now)
+{
+    unsigned generation = atomic_load(&runtime->saved_generation);
+    if (!az_mcp_before(now, atomic_load(&runtime->saved_edits)))
+        return 0;
+    return generation == atomic_load(&runtime->saved_generation) ? generation : 0;
 }
 
 static uint64_t queue_lifetime(const struct mcp_intent *intent)
@@ -115,18 +161,18 @@ static int queue_locked(struct mcp_runtime *runtime, const struct mcp_intent *in
                         unsigned grant, struct mcp_job *out)
 {
     struct mcp_commands *commands = &runtime->commands;
-    struct mcp_job *job = find_job(commands, intent->key);
+    const uint64_t arrival = az_mcp_clock();
+    struct mcp_job *job = find_job(commands, intent->key, arrival);
     if (job) {
         if (!same_intent(&job->intent, intent) || grant != job->grant)
             return AZ_INVALID;
         *out = *job;
         return AZ_OK;
     }
-    if (!grant || grant != mcp_command_grant(runtime, intent))
+    if (!grant || grant != command_grant_at(runtime, intent, az_mcp_clock()))
         return AZ_CANCELLED;
     if (commands->count == MCP_JOBS)
         return AZ_LIMIT;
-    const uint64_t arrival = monotonic_ns();
     if (!arrival)
         return AZ_FAILED;
     job = &commands->jobs[commands->count++];
@@ -149,7 +195,7 @@ int mcp_queue(struct mcp_runtime *runtime, const struct mcp_intent *intent, unsi
 bool mcp_job_status(struct mcp_runtime *runtime, const char *key, struct mcp_job *out)
 {
     pthread_mutex_lock(&runtime->lock);
-    struct mcp_job *job = find_job(&runtime->commands, key);
+    struct mcp_job *job = find_job(&runtime->commands, key, az_mcp_clock());
     if (job)
         *out = *job;
     pthread_mutex_unlock(&runtime->lock);
@@ -159,7 +205,7 @@ bool mcp_job_status(struct mcp_runtime *runtime, const char *key, struct mcp_job
 bool mcp_cancel_job(struct mcp_runtime *runtime, const char *key, struct mcp_job *out)
 {
     pthread_mutex_lock(&runtime->lock);
-    struct mcp_job *job = find_job(&runtime->commands, key);
+    struct mcp_job *job = find_job(&runtime->commands, key, az_mcp_clock());
     if (job) {
         if (job->state <= JOB_ACCEPTED)
             job->cancel_requested = true;
@@ -169,16 +215,9 @@ bool mcp_cancel_job(struct mcp_runtime *runtime, const char *key, struct mcp_job
     return job != NULL;
 }
 
-static uint64_t monotonic_ns(void)
-{
-    struct timespec clock;
-    if (clock_gettime(CLOCK_MONOTONIC, &clock) || clock.tv_sec < 0)
-        return 0;
-    return (uint64_t)clock.tv_sec * NS_PER_SECOND + (uint64_t)clock.tv_nsec;
-}
-
 static void settle(struct mcp_active_job *active, unsigned state, int reason)
 {
+    active->awaiting_confirmation = false;
     active->result.state = state;
     active->result.reason = reason;
     active->result.settled = true;
@@ -259,29 +298,32 @@ static void command_complete(const az_command_completion *completion, void *user
         receive_release(active, completion);
 }
 
-static void publish_active(struct mcp_commands *commands)
+static void publish_active(struct mcp_commands *commands, uint64_t now)
 {
     struct mcp_active_job *active = &commands->active;
     if (!active->changed)
         return;
+    if (!active->waiting_terminal && !active->waiting_release) {
+        active->result.collect_until = mcp_receipt_deadline(now);
+        active->present = false;
+    }
     active->result.cancel_requested = commands->jobs[active->index].cancel_requested;
     commands->jobs[active->index] = active->result;
     active->changed = false;
-    if (!active->waiting_terminal && !active->waiting_release)
-        active->present = false;
 }
 
-static void cancel_queued(struct mcp_runtime *runtime)
+static void cancel_queued(struct mcp_runtime *runtime, uint64_t now)
 {
     struct mcp_commands *commands = &runtime->commands;
     for (size_t i = 0; i < commands->count; ++i) {
         struct mcp_job *job = &commands->jobs[i];
         if (commands->active.present && commands->active.index == i)
             continue;
-        if (job->state == JOB_QUEUED && (job->grant != mcp_command_grant(runtime, &job->intent) || job->cancel_requested)) {
+        if (job->state == JOB_QUEUED && (job->grant != command_grant_at(runtime, &job->intent, now) || job->cancel_requested)) {
             job->state = JOB_CANCELLED;
             job->reason = AZ_CANCELLED;
             job->settled = true;
+            job->collect_until = mcp_receipt_deadline(now);
         }
     }
 }
@@ -362,6 +404,7 @@ static int submit_batch(struct mcp_runtime *runtime, const struct mcp_intent *in
 static void confirm_replacement(int accepted, void *user)
 {
     struct mcp_runtime *runtime = user;
+    runtime->commands.replacement_open = false;
     struct mcp_active_job *active = &runtime->commands.active;
     if (!active->awaiting_confirmation)
         return;
@@ -377,29 +420,35 @@ static bool wait_confirmation(struct mcp_runtime *runtime, struct mcp_active_job
         return false;
     if (active->awaiting_confirmation)
         return true;
+    /* Only the current owner can set awaiting_confirmation. A retired job's
+     * modal remains occupied until the core delivers its one answer. */
+    if (runtime->commands.replacement_open) {
+        settle(active, JOB_REJECTED, AZ_BUSY);
+        return true;
+    }
     char message[112];
     snprintf(message, sizeof message, "Deck %u. Replace the saved cue bank with %u requested cues?",
              active->result.intent.deck + 1, active->result.intent.batch_count);
     const az_core_v1 *core = runtime->core;
     if (AZ_HAS(core, confirm) && core->confirm(MCP_ID, "Replace saved cues?", message,
-                                             "Replace", confirm_replacement, runtime) == 0)
+                                             "Replace", confirm_replacement, runtime) == 0) {
+        runtime->commands.replacement_open = true;
         active->awaiting_confirmation = true;
-    else
+    } else
         settle(active, JOB_REJECTED, AZ_BUSY);
     return true;
 }
 
-static bool intent_revoked(struct mcp_runtime *runtime, const struct mcp_active_job *active)
+static bool intent_revoked(struct mcp_runtime *runtime, const struct mcp_active_job *active,
+                           uint64_t now)
 {
     return active->result.cancel_requested ||
-           active->result.grant != mcp_command_grant(runtime, &active->result.intent);
+           active->result.grant != command_grant_at(runtime, &active->result.intent, now);
 }
 
-static bool eligible_to_submit(struct mcp_runtime *runtime, struct mcp_active_job *active, uint64_t now)
+static bool active_lease(struct mcp_runtime *runtime, struct mcp_active_job *active, uint64_t now)
 {
-    if (active->awaiting_confirmation)
-        return false;
-    if (intent_revoked(runtime, active)) {
+    if (intent_revoked(runtime, active, now)) {
         settle(active, JOB_CANCELLED, AZ_CANCELLED);
         return false;
     }
@@ -407,62 +456,62 @@ static bool eligible_to_submit(struct mcp_runtime *runtime, struct mcp_active_jo
         settle(active, JOB_REJECTED, AZ_STALE);
         return false;
     }
-    return !wait_confirmation(runtime, active);
+    return true;
 }
 
-static void submit_active(struct mcp_runtime *runtime)
+static void submit_active(struct mcp_runtime *runtime, uint64_t now)
 {
     struct mcp_commands *commands = &runtime->commands;
     struct mcp_active_job *active = &commands->active;
     const struct mcp_intent *intent = &active->result.intent;
-    const uint64_t now = monotonic_ns();
-    if (!eligible_to_submit(runtime, active, now))
+    if (!active_lease(runtime, active, now) || wait_confirmation(runtime, active))
         return;
     int status = native_target(runtime, intent);
-    if (status == AZ_OK && commands->next_request != UINT64_MAX) {
-        active->request_id = ++commands->next_request;
-        status = intent->batch_mode ? submit_batch(runtime, intent, now, active->request_id)
-                                    : submit_request(runtime, intent, active->result.deadline_ns, active->request_id);
-        if (status == AZ_OK) {
-            active->result.state = JOB_ACCEPTED;
-            active->waiting_terminal = true;
-            active->changed = true;
-            return;
-        }
+    if (status != AZ_OK || commands->next_request == UINT64_MAX) {
+        settle(active, JOB_REJECTED, status == AZ_OK ? AZ_FAILED : status);
+        return;
     }
-    settle(active, JOB_REJECTED, status == AZ_OK ? AZ_FAILED : status);
+    now = az_mcp_clock();
+    if (!active_lease(runtime, active, now))
+        return;
+    active->request_id = ++commands->next_request;
+    status = intent->batch_mode ? submit_batch(runtime, intent, now, active->request_id)
+                                : submit_request(runtime, intent, active->result.deadline_ns, active->request_id);
+    if (status != AZ_OK) {
+        settle(active, JOB_REJECTED, status);
+        return;
+    }
+    active->result.state = JOB_ACCEPTED;
+    active->waiting_terminal = true;
+    active->changed = true;
 }
 
-static void expire_grant(struct mcp_runtime *runtime)
+static void expire_grant(struct mcp_runtime *runtime, uint64_t now)
 {
     struct mcp_commands *commands = &runtime->commands;
-    if (!atomic_load(&commands->grant))
-        return;
-    uint64_t now = monotonic_ns();
-    int clock = compare_timestamps(now, commands->arm_deadline, NS_PER_SECOND, NS_PER_SECOND, 1);
-    if (!now || clock == AZ_TIME_INVALID || clock != AZ_TIME_BEFORE)
+    if (atomic_load(&commands->grant) && !mcp_live_grant_generation(runtime, now))
         mcp_commands_disarm(runtime);
 }
 
-void mcp_commands_tick(struct mcp_runtime *runtime)
+void mcp_commands_tick(struct mcp_runtime *runtime, uint64_t now)
 {
     struct mcp_commands *commands = &runtime->commands;
     if (!commands->api)
         return;
-    expire_grant(runtime);
+    expire_grant(runtime, now);
     struct mcp_active_job *active = &commands->active;
 
     if (pthread_mutex_trylock(&runtime->lock))
         return;
-    publish_active(commands);
+    publish_active(commands, now);
     if (active->present)
         active->result.cancel_requested = commands->jobs[active->index].cancel_requested;
-    cancel_queued(runtime);
+    cancel_queued(runtime, now);
     if (!active->present)
         take_next(commands);
     pthread_mutex_unlock(&runtime->lock);
-    if (active->waiting_terminal && intent_revoked(runtime, active))
+    if (active->waiting_terminal && intent_revoked(runtime, active, now))
         cancel_active(commands);
     if (active->present && active->result.state == JOB_QUEUED)
-        submit_active(runtime);
+        submit_active(runtime, now);
 }

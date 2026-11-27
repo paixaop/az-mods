@@ -75,6 +75,7 @@ void sp_redraw(SpRuntime *state)
 
 void sp_close_planner(SpRuntime *state)
 {
+    sp_reset_drag(state);
     state->core->surface_show(state->surface, 0);
     state->planner_open = false;
     if (atomic_load(&state->phase) == SP_WORKING)
@@ -147,6 +148,8 @@ static int init(const az_core_v1 *core)
     int status = register_ui(core);
     if (status != AZ_OK)
         return status;
+    if (AZ_HAS(core, touch_filter))
+        core->touch_filter(SP_ID, sp_touch_drag, &runtime);
     return core->thread_start(SP_ID, "planner", sp_worker, &runtime);
 }
 

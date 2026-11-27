@@ -50,7 +50,7 @@ static int load_config(const char *dir, const char *name, cues_config *out, char
     char path[1024];
     if (snprintf(path, sizeof path, "%s/%s", dir, name) >= (int)sizeof path)
         return message(error, n, "USB data path is too long");
-    int fd = open(path, O_RDONLY | O_CLOEXEC | O_NOFOLLOW);
+    int fd = open(path, O_RDONLY | O_CLOEXEC | O_NOFOLLOW | O_NONBLOCK);
     if (fd < 0)
         return errno == ENOENT ? message(error, n, "Configuration file not found")
                                : message(error, n, "Cannot open configuration file");
@@ -86,9 +86,9 @@ static int write_config_bytes(int fd, const char *json, size_t count)
     return 1;
 }
 
-static int write_config_file(const char *temp, const char *json, size_t count, char *error, size_t n)
+static int write_config_file(char *temp, const char *json, size_t count, char *error, size_t n)
 {
-    int fd = open(temp, O_WRONLY | O_CREAT | O_TRUNC | O_CLOEXEC | O_NOFOLLOW, 0600);
+    int fd = mkostemp(temp, O_CLOEXEC);
     if (fd < 0) {
         message(error, n, "Cannot create configuration on USB");
         return -1;
@@ -102,7 +102,7 @@ static int write_config_file(const char *temp, const char *json, size_t count, c
 static int config_paths(const char *dir, const char *name, char path[1024], char temp[1024])
 {
     return snprintf(path, 1024, "%s/%s", dir, name) < 1024 &&
-           snprintf(temp, 1024, "%s/%s.tmp", dir, name) < 1024;
+           snprintf(temp, 1024, "%s/%s.tmp.XXXXXX", dir, name) < 1024;
 }
 static int save_config(const char *dir, const char *name, const cues_config *config, char *error,
                        size_t n)
@@ -187,9 +187,14 @@ int cues_store_init(const az_core_v1 *core, cues_config *config, char *status, s
             message(status, n, "Create a group to begin");
     } else
         message(status, n, "USB unavailable; changes cannot be saved");
+    return 1;
+}
+
+int cues_store_start(char *status, size_t n)
+{
     if (box.started)
         return 1;
-    if (core->thread_start(CUES_ID, "cues-settings", worker, NULL)) {
+    if (SC->thread_start(CUES_ID, "cues-settings", worker, NULL)) {
         message(status, n, "Cannot start settings storage worker");
         return 0;
     }

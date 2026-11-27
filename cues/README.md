@@ -34,7 +34,7 @@ Name and comment templates support two variables.
 
 With **Bars** selected, `{phrase} ({length} bars)` can produce `Chorus (32 bars)`. The native SDK has one cue comment field, so name and comment are combined into that field, bounded to 127 UTF-8 bytes. Global collision preference resolves competing hot/memory candidates; other conflicts use group/rule order. Limits cannot exceed eight hot pads and ten memory cues.
 
-The editor has touch controls, browse-knob navigation and an on-screen keyboard. Smaller menu areas page the fields. Genre/rating filters and stem controls are omitted because they are not supported by this mod's SDK data model.
+The editor has touch controls, browse-knob navigation and the deck’s native keyboard. Smaller menu areas page the fields. Genre/rating filters and stem controls are omitted because they are not supported by this mod's SDK data model.
 
 Applied configuration is saved by a worker to `MODS/community-mods/cues/data/cue-rules.json` on the installation USB. With the USB mounted at `/media/usb/sda1`, the full path is:
 

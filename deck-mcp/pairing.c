@@ -1,21 +1,23 @@
 /* SPDX-License-Identifier: GPL-3.0-only */
 #include "http.h"
+#include "tls.h"
 
 #include <event2/buffer.h>
-#include <openssl/pem.h>
-#include <openssl/rand.h>
+#include <mbedtls/constant_time.h>
+#include <mbedtls/platform_util.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
 
-static bool certificate_fingerprint(X509 *cert, char fingerprint[MCP_FINGERPRINT_SIZE])
+static bool certificate_fingerprint(const mbedtls_x509_crt *cert, char fingerprint[MCP_FINGERPRINT_SIZE])
 {
     static const char hex[] = "0123456789abcdef";
     unsigned char hash[32];
-    unsigned length = 0;
-    if (!cert || X509_digest(cert, EVP_sha256(), hash, &length) != 1 || length != sizeof hash)
+    size_t length;
+    if (psa_hash_compute(PSA_ALG_SHA_256, cert->raw.p, cert->raw.len, hash, sizeof hash, &length) != PSA_SUCCESS ||
+        length != sizeof hash)
         return false;
-    for (unsigned i = 0; i < length; ++i) {
+    for (size_t i = 0; i < length; ++i) {
         fingerprint[2 * i] = hex[hash[i] >> 4];
         fingerprint[2 * i + 1] = hex[hash[i] & 15];
     }
@@ -23,43 +25,31 @@ static bool certificate_fingerprint(X509 *cert, char fingerprint[MCP_FINGERPRINT
     return true;
 }
 
-static bool self_signed(X509 *cert)
+static bool self_signed(mbedtls_x509_crt *cert)
 {
-    if (X509_NAME_cmp(X509_get_subject_name(cert), X509_get_issuer_name(cert)) != 0)
-        return false;
-    EVP_PKEY *key = X509_get_pubkey(cert);
-    bool verified = key && X509_verify(cert, key) == 1;
-    EVP_PKEY_free(key);
-    return verified;
+    return cert->issuer_raw.len == cert->subject_raw.len &&
+           memcmp(cert->issuer_raw.p, cert->subject_raw.p, cert->issuer_raw.len) == 0 &&
+           mcp_certificate_signed_by(cert, cert);
 }
 
-static char *certificate_pem(X509 *cert)
+static char *certificate_pem(const mbedtls_x509_crt *cert)
 {
-    BIO *pem = BIO_new(BIO_s_mem());
-    char *result = NULL;
-    if (pem && PEM_write_bio_X509(pem, cert) == 1) {
-        char *bytes = NULL;
-        long n = BIO_get_mem_data(pem, &bytes);
-        if (n > 0 && n < 16384)
-            result = strndup(bytes, (size_t)n);
-    }
-    BIO_free(pem);
-    return result;
+    unsigned char pem[MCP_CERT_PEM_LIMIT];
+    return mcp_certificate_pem(cert, pem, sizeof pem) ? strdup((const char *)pem) : NULL;
 }
 
 static char *generated_ca(const char *directory)
 {
-    BIO *pem = mcp_open_pem(directory, MCP_SETUP_CA);
-    X509 *cert = pem ? PEM_read_bio_X509(pem, NULL, NULL, NULL) : NULL;
-    char *public_pem = cert ? certificate_pem(cert) : NULL;
-    X509_free(cert);
-    BIO_free(pem);
-    return public_pem;
+    mbedtls_x509_crt cert;
+    mbedtls_x509_crt_init(&cert);
+    char *pem = mcp_load_certificate(directory, MCP_SETUP_CA, &cert) ? certificate_pem(&cert) : NULL;
+    mbedtls_x509_crt_free(&cert);
+    return pem;
 }
 
-void mcp_pair_init(struct mcp_pairing *pair, SSL_CTX *tls, const char *directory, bool generated)
+void mcp_pair_init(struct mcp_pairing *pair, struct mcp_tls *tls, const char *directory, bool generated)
 {
-    X509 *leaf = SSL_CTX_get0_certificate(tls);
+    mbedtls_x509_crt *leaf = &tls->identity.cert;
     if (!certificate_fingerprint(leaf, pair->fingerprint))
         return;
     if (generated) {
@@ -75,7 +65,7 @@ void mcp_pair_init(struct mcp_pairing *pair, SSL_CTX *tls, const char *directory
 
 static void clear_ticket(struct mcp_pairing *pair)
 {
-    OPENSSL_cleanse(pair->code, sizeof pair->code);
+    mbedtls_platform_zeroize(pair->code, sizeof pair->code);
     pair->expires = 0;
     pair->attempts = 0;
 }
@@ -101,11 +91,11 @@ static bool generate_code(char code[MCP_PAIR_CODE_SIZE], const char *previous)
     uint32_t value;
     do {
         do {
-            if (RAND_bytes((unsigned char *)&value, sizeof value) != 1)
+            if (psa_generate_random((unsigned char *)&value, sizeof value) != PSA_SUCCESS)
                 return false;
         } while (value >= limit);
         snprintf(code, MCP_PAIR_CODE_SIZE, "%0*u", MCP_PAIR_CODE_DIGITS, (unsigned)(value % range));
-    } while (CRYPTO_memcmp(code, previous, MCP_PAIR_CODE_DIGITS) == 0);
+    } while (mbedtls_ct_memcmp(code, previous, MCP_PAIR_CODE_DIGITS) == 0);
     return true;
 }
 
@@ -121,7 +111,7 @@ static bool new_ticket(struct mcp_pairing *pair)
         memcpy(pair->code, code, sizeof code);
         pair->expires = now + MCP_PAIR_DURATION;
     }
-    OPENSSL_cleanse(code, sizeof code);
+    mbedtls_platform_zeroize(code, sizeof code);
     return generated;
 }
 
@@ -171,7 +161,7 @@ static char *bundle_json(const struct mcp_pairing *pair, const struct mcp_config
     char *wire = cmcp_json_object_len(bundle) == 5 ? cmcp_json_emit(bundle) : NULL;
     const cmcp_json_t *stored = cmcp_json_object_get(bundle, "bearerToken");
     if (stored)
-        OPENSSL_cleanse(stored->str.s, stored->str.len);
+        mbedtls_platform_zeroize(stored->str.s, stored->str.len);
     cmcp_json_free(bundle);
     return wire;
 }
@@ -194,8 +184,8 @@ static bool code_matches(struct evbuffer *input, const char *code)
     bool matches = evbuffer_get_length(input) == sizeof form &&
         evbuffer_remove(input, form, sizeof form) == sizeof form &&
         !memcmp(form, prefix, prefix_length) &&
-        CRYPTO_memcmp(form + prefix_length, code, MCP_PAIR_CODE_DIGITS) == 0;
-    OPENSSL_cleanse(form, sizeof form);
+        mbedtls_ct_memcmp(form + prefix_length, code, MCP_PAIR_CODE_DIGITS) == 0;
+    mbedtls_platform_zeroize(form, sizeof form);
     return matches;
 }
 
@@ -271,7 +261,7 @@ static bool send_bundle(struct evhttp_request *request, char *wire)
     struct evbuffer *body = evbuffer_new();
     size_t length = strlen(wire);
     bool ready = body && evbuffer_add(body, wire, length) == 0;
-    OPENSSL_cleanse(wire, length);
+    mbedtls_platform_zeroize(wire, length);
     free(wire);
     if (ready) {
         struct evkeyvalq *headers = evhttp_request_get_output_headers(request);

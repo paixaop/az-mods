@@ -1,26 +1,70 @@
 --- a/http.c
 +++ b/http.c
-@@ -4411,6 +4411,11 @@
- 	/* we need a connection object to put the http request on */
- 	if (http->bevcb != NULL) {
- 		bev = (*http->bevcb)(http->base, http->bevcbarg);
-+		if (!bev) {
-+			mm_free(hostname);
-+			mm_free(portname);
-+			return (NULL);
-+		}
- 	}
- 	evcon = evhttp_connection_base_bufferevent_new(
- 		http->base, NULL, bev, hostname, atoi(portname));
-@@ -4489,8 +4494,9 @@
- 
- 	evcon = evhttp_get_request_connection(http, fd, sa, salen);
- 	if (evcon == NULL) {
+@@ -4801,0 +4802,2 @@
++			if (!bev)
++				return (NULL);
+@@ -4824,0 +4827,5 @@
++			if (!bev) {
++				mm_free(hostname);
++				mm_free(portname);
++				return (NULL);
++			}
+@@ -4908,2 +4915,3 @@
 -		event_sock_warn(fd, "%s: cannot get connection on "EV_SOCK_FMT,
 -		    __func__, EV_SOCK_ARG(fd));
-+		if (http->bevcb == NULL)
++		if (!http->bevcb)
 +			event_sock_warn(fd, "%s: cannot get connection on "EV_SOCK_FMT,
 +			    __func__, EV_SOCK_ARG(fd));
- 		evutil_closesocket(fd);
- 		return;
- 	}
+--- a/bufferevent_mbedtls.c
++++ b/bufferevent_mbedtls.c
+@@ -34,0 +35 @@
++#include <limits.h>
+@@ -223 +223,0 @@
+-	char buf[100];
+@@ -229,3 +229 @@
+-		mbedtls_strerror(errcode, buf, sizeof(buf));
+-		switch (errcode) {
+-		case MBEDTLS_ERR_SSL_PEER_CLOSE_NOTIFY:
++		if (errcode == MBEDTLS_ERR_SSL_PEER_CLOSE_NOTIFY)
+@@ -233,10 +230,0 @@
+-			break;
+-		case MBEDTLS_ERR_SSL_CLIENT_RECONNECT:
+-			event_warnx("BUG: Unsupported feature %d: %s", errcode, buf);
+-			break;
+-		default:
+-			/* should be impossible; treat as normal error. */
+-			event_warnx(
+-				"BUG: Unexpected mbedtls error code %d: %s", errcode, buf);
+-			break;
+-		}
+@@ -412,0 +401,2 @@
++	if (!ctx)
++		return NULL;
+@@ -414 +404,4 @@
+-	mbedtls_ssl_setup(ctx, conf);
++	if (mbedtls_ssl_setup(ctx, conf) != 0) {
++		bufferevent_mbedtls_dyncontext_free(ctx);
++		return NULL;
++	}
+--- a/bufferevent_ssl.c
++++ b/bufferevent_ssl.c
+@@ -928,0 +929,2 @@
++	if (!bev_ssl->ssl)
++		return;
+@@ -1046 +1048,3 @@
+-		&bufferevent_ops_ssl, tmp_options) < 0)
++		&bufferevent_ops_ssl, tmp_options) < 0) {
++		mm_free(bev_ssl);
++		bev_ssl = NULL;
+@@ -1047,0 +1052 @@
++	}
+@@ -1051,0 +1057,5 @@
++	if (!bev_ssl->ssl) {
++		if (options & BEV_OPT_CLOSE_ON_FREE)
++			ssl_ops->free_raw(ssl);
++		goto err;
++	}
+@@ -1086,3 +1095,0 @@
+-		if (bev_ssl->ssl && bev_ssl->ssl_ops && options & BEV_OPT_CLOSE_ON_FREE)
+-			bev_ssl->ssl_ops->free(bev_ssl->ssl, options);
+-		bev_ssl->ssl = NULL;

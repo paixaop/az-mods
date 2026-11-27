@@ -69,23 +69,17 @@ static void add_cand(an_cand_t *out, int *n, int max, uint32_t ms, uint32_t samp
     (*n)++;
 }
 
-static int first_downbeat(const an_analysis_t *a)
-{
-    for (int i = 0; i < a->nbeats; i++)
-        if (a->beats[i].beat_in_bar == 1) return i;
-    return a->nbeats;
-}
-
 static int grid_next(const an_analysis_t *a, uint32_t pos_ms, int bars, uint32_t *when, int maxn)
 {
-    if (!a || !a->nbeats || bars <= 0) return 0;
-    int stride = bars * 4;
-    int found = 0;
-    /* Grid rows can begin mid-bar; count complete bars from the first downbeat. */
-    for (int i = first_downbeat(a); i < a->nbeats && found < maxn; i += stride) {
-        if (a->beats[i].beat_in_bar != 1) continue;
-        if (a->beats[i].time_ms <= pos_ms + 250) continue;
-        when[found++] = a->beats[i].time_ms;
+    if (!a || bars <= 0) return 0;
+    int found = 0, bar_index = 0;
+    /* Count marked downbeats from the first full bar, including meter changes. */
+    for (int i = 0; i < a->nbeats && found < maxn; ++i) {
+        const an_beat_t *beat = &a->beats[i];
+        if (beat->beat_in_bar != 1) continue;
+        if (bar_index++ % bars) continue;
+        if (beat->time_ms <= (uint64_t)pos_ms + 250) continue;
+        when[found++] = beat->time_ms;
     }
     return found;
 }

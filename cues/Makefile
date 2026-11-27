@@ -13,7 +13,7 @@ endif
 CFLAGS := -std=c11 -O2 -Wall -Wextra -Werror=implicit-function-declaration \
           -fPIC -fvisibility=hidden -fno-omit-frame-pointer -fno-optimize-sibling-calls \
           -fexceptions -fasynchronous-unwind-tables -D_GNU_SOURCE -I$(AZ_SDK_INCLUDE)
-LDFLAGS := -shared -static-libgcc -Wl,--no-undefined -Wl,--hash-style=gnu
+LDFLAGS := -shared -static-libgcc -Wl,--no-undefined -Wl,--hash-style=gnu -Wl,--strip-all
 LDLIBS := -lm -lpthread
 NO_OUTLINE_ATOMICS := $(shell printf 'int main(void){return 0;}\n' | $(CC) -mno-outline-atomics -x c -o /dev/null - 2>/dev/null && echo -mno-outline-atomics)
 CFLAGS += $(NO_OUTLINE_ATOMICS)
@@ -31,7 +31,7 @@ HOST_FLAGS := -std=c11 -O1 -g -Wall -Wextra -Werror -D_GNU_SOURCE -I. -I$(AZ_SDK
 all: $(OUT)/$(MOD_ID).so
 $(OUT):
 	mkdir -p $@
-$(OUT)/$(MOD_ID).so: $(SRCS) $(HEADERS) | $(OUT)
+$(OUT)/$(MOD_ID).so: $(SRCS) $(HEADERS) Makefile | $(OUT)
 	$(CC) $(CFLAGS) $(LDFLAGS) -o $@ $(SRCS) $(LDLIBS)
 $(OUT)/test_plan: tests/test_plan.c plan.c config.c $(HEADERS) | $(OUT)
 	$(TEST_CC) $(HOST_FLAGS) -o $@ tests/test_plan.c plan.c config.c -lm
@@ -48,11 +48,11 @@ $(OUT)/render_settings: tools/render_settings.c settings.c config.c $(HEADERS) |
 $(OUT)/render_deck: tools/render_deck.c cues.c $(HEADERS) | $(OUT)
 	$(TEST_CC) $(HOST_FLAGS) -o $@ tools/render_deck.c -lm
 unit: $(OUT)/test_plan $(OUT)/test_runtime $(OUT)/test_config $(OUT)/test_store $(OUT)/test_settings
-	./$(OUT)/test_plan
-	./$(OUT)/test_runtime
-	./$(OUT)/test_config
-	./$(OUT)/test_store
-	./$(OUT)/test_settings
+	"$(OUT)/test_plan"
+	"$(OUT)/test_runtime"
+	"$(OUT)/test_config"
+	"$(OUT)/test_store"
+	"$(OUT)/test_settings"
 test:
 	CC=$(TEST_CC) sh $(AZ_SDK)/tools/harness/sanitize.sh --passes "$(SAN)" \
 	    $(MOD_ID):4:cues.c,config.c,settings.c,store.c,plan.c

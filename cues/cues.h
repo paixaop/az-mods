@@ -83,6 +83,7 @@ int cues_build_plan(const cues_config *config, const az_track_snapshot *track,
  * worker. */
 const az_screen_v1 *cues_settings_init(const az_core_v1 *core,
                                        void (*changed)(void));
+void cues_settings_start_storage(void);
 const cues_config *cues_settings_config(void);
 void cues_settings_status(const char *status);
 /* Drives bounded handoff of persistence completions, never file IO on UI. */

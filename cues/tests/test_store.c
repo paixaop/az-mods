@@ -25,6 +25,7 @@ static int checked_stat(int fd, struct stat *st)
 #undef fstat
 static char directory[256];
 static int usb = 1;
+static int worker_starts, refuse_worker;
 static const char *data_dir(const char *id)
 {
     assert(!strcmp(id, CUES_ID));
@@ -32,11 +33,9 @@ static const char *data_dir(const char *id)
 }
 static int thread_start(const char *id, const char *name, void *(*fn)(void *), void *arg)
 {
-    (void)id;
-    (void)name;
-    (void)fn;
-    (void)arg;
-    return 0;
+    assert(!strcmp(id, CUES_ID) && !strcmp(name, "cues-settings") && fn == worker && !arg);
+    ++worker_starts;
+    return refuse_worker ? -1 : 0;
 }
 static void run_worker(void)
 {
@@ -48,13 +47,38 @@ static void run_worker(void)
 }
 static cues_config config, loaded;
 static char status[160];
+
+static void nonregular_entries(const az_core_v1 *core, const char *path)
+{
+    char old_temp[512];
+    snprintf(old_temp, sizeof old_temp, "%s/cue-rules.json.tmp", directory);
+    assert(!unlink(path) && !mkfifo(path, 0600) && !mkfifo(old_temp, 0600));
+    alarm(5);
+    assert(cues_store_init(core, &loaded, status, sizeof status));
+    assert(!loaded.group_count && strstr(status, "regular JSON file"));
+    assert(save_config(directory, "cue-rules.json", &config, status, sizeof status));
+    alarm(0);
+    assert(load_config(directory, "cue-rules.json", &loaded, status, sizeof status));
+    assert(!strcmp(loaded.groups[0].name, config.groups[0].name));
+    struct stat st;
+    assert(!lstat(old_temp, &st) && S_ISFIFO(st.st_mode));
+    assert(!unlink(old_temp));
+}
+
 int main(void)
 {
     snprintf(directory, sizeof directory, "/tmp/cues-store-XXXXXX");
     assert(mkdtemp(directory));
     az_core_v1 core = { .size = sizeof core, .data_dir = data_dir, .thread_start = thread_start };
     assert(cues_store_init(&core, &config, status, sizeof status));
-    assert(!config.group_count);
+    assert(!config.group_count && !worker_starts);
+    assert(cues_store_request(&config, 1) == -1);
+    refuse_worker = 1;
+    assert(!cues_store_start(status, sizeof status) && worker_starts == 1);
+    assert(strstr(status, "Cannot start") && cues_store_request(&config, 1) == -1);
+    refuse_worker = 0;
+    assert(cues_store_start(status, sizeof status) && worker_starts == 2);
+    assert(cues_store_start(status, sizeof status) && worker_starts == 2);
     config.group_count = 1;
     cues_group *group = &config.groups[0];
     cues_group_default(group, &config);
@@ -138,6 +162,7 @@ int main(void)
     assert(!rmdir(replacement));
     assert(!load_config(directory, "missing", &loaded, status, sizeof status));
     assert(strstr(status, "not found"));
+    nonregular_entries(&core, path);
     unlink(path);
     assert(symlink("/dev/null", path) == 0);
     assert(!load_config(directory, "cue-rules.json", &loaded, status, sizeof status));

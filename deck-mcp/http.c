@@ -1,11 +1,14 @@
 /* SPDX-License-Identifier: GPL-3.0-only */
 #include "http.h"
 #include "providers.h"
+#include "tls.h"
 
 #include <event2/buffer.h>
 #include <event2/bufferevent_ssl.h>
 #include <event2/event.h>
 #include <event2/keyvalq_struct.h>
+#include <mbedtls/constant_time.h>
+#include <mbedtls/platform_util.h>
 #include <signal.h>
 #include <stdio.h>
 #include <stdlib.h>
@@ -16,96 +19,75 @@
 
 struct gateway {
     struct mcp_runtime *runtime;
-    const char *directory;
     struct mcp_config config;
-    SSL_CTX *tls;
+    struct mcp_tls *tls;
     struct event_base *base;
     struct evhttp *http;
     struct event *pulse;
     cmcp_server_t *mcp;
     struct mcp_providers *providers;
     struct mcp_pairing pairing;
-    unsigned connections;
     bool setup_tls;
 };
 
-struct mcp_connection {
-    struct gateway *gateway;
-    struct bufferevent *bev;
-    struct event *deadline;
-};
-
-static int connection_index = -1;
-static pthread_once_t index_once = PTHREAD_ONCE_INIT;
-
-static void release_connection(void *parent, void *ptr, CRYPTO_EX_DATA *data,
-                               int index, long arg, void *argp)
+static void release_connection(struct evhttp_connection *connection, void *user)
 {
-    (void)parent;
-    (void)data;
-    (void)index;
-    (void)arg;
-    (void)argp;
-    struct mcp_connection *connection = ptr;
-    if (!connection)
-        return;
-    event_free(connection->deadline);
-    --connection->gateway->connections;
-    free(connection);
-}
-
-static void make_connection_index(void)
-{
-    connection_index = SSL_get_ex_new_index(0, NULL, NULL, NULL, release_connection);
+    struct bufferevent *bev = evhttp_connection_get_bufferevent(connection);
+    mbedtls_ssl_set_user_data_p(bufferevent_mbedtls_get_ssl(bev), NULL);
+    evhttp_connection_set_closecb(connection, NULL, NULL);
+    event_free(user);
 }
 
 static void expire_connection(evutil_socket_t socket, short what, void *user)
 {
     (void)socket;
     (void)what;
-    const struct mcp_connection *connection = user;
-    evutil_socket_t fd = bufferevent_getfd(connection->bev);
+    evutil_socket_t fd = bufferevent_getfd(user);
     if (fd >= 0)
         shutdown(fd, SHUT_RDWR);
 }
 
-static bool attach_connection(SSL *ssl, struct gateway *gateway)
+static struct event *connection_deadline(struct event_base *base, struct bufferevent *bev)
 {
     const struct timeval maximum = { .tv_sec = 8 };
-    struct mcp_connection *connection = calloc(1, sizeof *connection);
-    if (!connection)
-        return false;
-    connection->gateway = gateway;
-    connection->deadline = evtimer_new(gateway->base, expire_connection, connection);
-    if (connection->deadline && evtimer_add(connection->deadline, &maximum) == 0 &&
-        SSL_set_ex_data(ssl, connection_index, connection) == 1) {
-        ++gateway->connections;
-        return true;
-    }
-    if (connection->deadline)
-        event_free(connection->deadline);
-    free(connection);
-    return false;
+    struct event *deadline = evtimer_new(base, expire_connection, bev);
+    if (deadline && evtimer_add(deadline, &maximum) == 0)
+        return deadline;
+    if (deadline)
+        event_free(deadline);
+    return NULL;
+}
+
+/* Libevent associates a request before starting the handshake. Keep one
+ * absolute deadline per TCP connection, including HTTP keep-alive requests. */
+static int attach_deadline(struct evhttp_request *request, void *user)
+{
+    const struct gateway *gateway = user;
+    struct evhttp_connection *connection = evhttp_request_get_connection(request);
+    struct bufferevent *bev = evhttp_connection_get_bufferevent(connection);
+    mbedtls_ssl_context *ssl = bufferevent_mbedtls_get_ssl(bev);
+    if (!ssl)
+        return -1;
+    if (mbedtls_ssl_get_user_data_p(ssl))
+        return 0;
+    struct event *deadline = connection_deadline(gateway->base, bev);
+    if (!deadline)
+        return -1;
+    mbedtls_ssl_set_user_data_p(ssl, deadline);
+    evhttp_connection_set_closecb(connection, release_connection, deadline);
+    return 0;
 }
 
 static struct bufferevent *new_tls(struct event_base *base, void *user)
 {
     struct gateway *gateway = user;
-    if (gateway->connections >= MCP_CONNECTION_LIMIT)
+    if (evhttp_get_connection_count(gateway->http) >= MCP_CONNECTION_LIMIT)
         return NULL;
-    SSL *ssl = SSL_new(gateway->tls);
+    mbedtls_dyncontext *ssl = bufferevent_mbedtls_dyncontext_new(&gateway->tls->config);
     if (!ssl)
         return NULL;
-    if (attach_connection(ssl, gateway)) {
-        struct mcp_connection *connection = SSL_get_ex_data(ssl, connection_index);
-        struct bufferevent *bev = bufferevent_openssl_socket_new(
-            base, -1, ssl, BUFFEREVENT_SSL_ACCEPTING, BEV_OPT_CLOSE_ON_FREE | BEV_OPT_DEFER_CALLBACKS);
-        if (bev)
-            connection->bev = bev;
-        return bev;
-    }
-    SSL_free(ssl);
-    return NULL;
+    return bufferevent_mbedtls_socket_new(base, -1, ssl, BUFFEREVENT_SSL_ACCEPTING,
+                                         BEV_OPT_CLOSE_ON_FREE | BEV_OPT_DEFER_CALLBACKS);
 }
 
 static bool unique_headers(const struct evkeyvalq *headers)
@@ -133,7 +115,7 @@ static bool authorized(const char *authorization, const char *token)
     const size_t length = 2 * MCP_TOKEN_BYTES;
     return authorization && strlen(authorization) == 7 + length &&
            !strncasecmp(authorization, "Bearer ", 7) &&
-           CRYPTO_memcmp(authorization + 7, token, length) == 0;
+           mbedtls_ct_memcmp(authorization + 7, token, length) == 0;
 }
 
 static int request_policy(struct evhttp_request *request, const struct mcp_config *config)
@@ -228,20 +210,27 @@ static void handle_http(struct evhttp_request *request, void *user)
     free(wire);
 }
 
+static bool save_reset_token(const az_core_v1 *core, char replacement[MCP_SECRET_SIZE])
+{
+    if (!mcp_generate_secret(replacement))
+        return false;
+    const char *directory = core->data_dir(MCP_ID);
+    return directory && mcp_replace_token(directory, replacement);
+}
+
 static void poll_token(struct gateway *gateway)
 {
     if (!mcp_token_requested(gateway->runtime))
         return;
     mcp_pair_cancel(&gateway->pairing, gateway->runtime);
     char replacement[MCP_SECRET_SIZE];
-    bool saved = mcp_generate_secret(replacement) && mcp_replace_token(gateway->directory, replacement);
+    bool saved = save_reset_token(gateway->runtime->core, replacement);
     if (saved) {
         memcpy(gateway->config.token, replacement, sizeof replacement);
         mcp_pair_start(&gateway->pairing, gateway->runtime, &gateway->config);
     }
-    mcp_token_publish(gateway->runtime, saved ? MCP_TOKEN_SAVED : MCP_TOKEN_FAILED,
-                      saved ? gateway->config.token : NULL);
-    OPENSSL_cleanse(replacement, sizeof replacement);
+    mcp_token_publish(gateway->runtime, saved ? MCP_TOKEN_SAVED : MCP_TOKEN_FAILED);
+    mbedtls_platform_zeroize(replacement, sizeof replacement);
 }
 
 static void poll_stop(evutil_socket_t socket, short what, void *user)
@@ -268,6 +257,7 @@ static bool open_http(struct gateway *gateway)
     if (!gateway->http)
         return false;
     evhttp_set_bevcb(gateway->http, new_tls, gateway);
+    evhttp_set_newreqcb(gateway->http, attach_deadline, gateway);
     evhttp_set_gencb(gateway->http, handle_http, gateway);
     evhttp_set_allowed_methods(gateway->http, EVHTTP_REQ_GET | EVHTTP_REQ_POST | EVHTTP_REQ_DELETE |
                                                EVHTTP_REQ_HEAD | EVHTTP_REQ_PUT | EVHTTP_REQ_OPTIONS |
@@ -289,8 +279,6 @@ static bool open_providers(struct gateway *gateway)
 }
 static bool open_tls_runtime(struct gateway *gateway, const char *directory)
 {
-    if (pthread_once(&index_once, make_connection_index) || connection_index < 0)
-        return false;
     gateway->tls = gateway->setup_tls ? mcp_setup_tls(directory, gateway->config.bind) : mcp_load_tls(directory);
     return gateway->tls && mcp_generate_secret(gateway->runtime->session);
 }
@@ -317,8 +305,8 @@ static void close_gateway(struct gateway *gateway)
         event_base_free(gateway->base);
     cmcp_server_free(gateway->mcp);
     mcp_pair_close(&gateway->pairing);
-    SSL_CTX_free(gateway->tls);
-    OPENSSL_cleanse(&gateway->config, sizeof gateway->config);
+    mcp_tls_free(gateway->tls);
+    mbedtls_platform_zeroize(&gateway->config, sizeof gateway->config);
 }
 
 static bool block_sigpipe(void)
@@ -355,8 +343,7 @@ static void run_gateway(struct gateway *gateway)
     const az_core_v1 *core = gateway->runtime->core;
     mcp_connection_publish(gateway->runtime, NULL, 0, "Preparing Deck MCP...");
     const char *directory = core->data_dir(MCP_ID);
-    if (!directory || OPENSSL_init_ssl(OPENSSL_INIT_NO_LOAD_CONFIG | OPENSSL_INIT_NO_ATEXIT, NULL) != 1 ||
-        !mcp_prepare_config(directory, &gateway->config)) {
+    if (!directory || !mcp_prepare_config(directory, &gateway->config)) {
         startup_error(gateway->runtime, "Cannot set up Deck MCP. Check the installation USB.");
         return;
     }
@@ -366,12 +353,10 @@ static void run_gateway(struct gateway *gateway)
         startup_error(gateway->runtime, "HTTPS could not start. Check the network, clock and TLS files.");
         return;
     }
-    gateway->directory = directory;
     mcp_pair_init(&gateway->pairing, gateway->tls, directory, gateway->setup_tls);
     mcp_pair_offer(gateway->runtime, MCP_PAIR_IDLE, NULL, NULL, NULL);
-    mcp_connection_publish(gateway->runtime, gateway->config.bind, gateway->config.port,
-                           gateway->setup_tls ? "CA file on the USB: " MCP_SETUP_CA : NULL);
-    mcp_token_publish(gateway->runtime, MCP_TOKEN_READY, gateway->config.token);
+    mcp_connection_publish(gateway->runtime, gateway->config.bind, gateway->config.port, NULL);
+    mcp_token_publish(gateway->runtime, MCP_TOKEN_READY);
     core->log(MCP_ID, "Serving MCP HTTPS on %s:%u", gateway->config.bind, gateway->config.port);
     if (!atomic_load(&gateway->runtime->stopping))
         event_base_dispatch(gateway->base);
@@ -381,10 +366,15 @@ void *mcp_serve(void *arg)
 {
     struct mcp_runtime *runtime = arg;
     struct gateway gateway = { .runtime = runtime };
-    run_gateway(&gateway);
-    close_gateway(&gateway);
+    if (psa_crypto_init() == PSA_SUCCESS) {
+        run_gateway(&gateway);
+        close_gateway(&gateway);
+        mbedtls_psa_crypto_free();
+    } else {
+        startup_error(runtime, "Deck MCP could not initialize its TLS library.");
+    }
     mcp_pair_offer(runtime, MCP_PAIR_UNAVAILABLE, NULL, NULL, NULL);
-    mcp_token_publish(runtime, MCP_TOKEN_UNAVAILABLE, NULL);
+    mcp_token_publish(runtime, MCP_TOKEN_UNAVAILABLE);
     if (atomic_load(&runtime->stopping))
         mcp_connection_publish(runtime, NULL, 0, "Deck MCP is stopped.");
     atomic_store(&runtime->working, false);
