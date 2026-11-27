@@ -647,9 +647,18 @@ static const az_mcp_tool_v1 tools[] = {
 int cues_mcp_init(const az_core_v1 *core)
 {
     generation = az_mcp_clock();
-    if (!generation || core->thread_start(CUES_ID, "cues-mcp-edit", config_worker, &job))
+    if (!generation)
         return AZ_FAILED;
-    return az_mcp_register_tools(core, CUES_ID, tools, sizeof tools / sizeof tools[0], &provider);
+    az_mcp_provider *started = NULL;
+    int status = az_mcp_register_tools(core, CUES_ID, tools, sizeof tools / sizeof tools[0], &started);
+    if (status != AZ_OK)
+        return status;
+    if (core->thread_start(CUES_ID, "cues-mcp-edit", config_worker, &job)) {
+        az_mcp_provider_stop(started);
+        return AZ_FAILED;
+    }
+    provider = started;
+    return AZ_OK;
 }
 
 void cues_mcp_tick(void)

@@ -43,12 +43,14 @@ LDLIBS += -pthread
 endif
 ifeq ($(strip $(DEBUG)),1)
 CFLAGS += -g
+else
+LDFLAGS += -Wl,--strip-all
 endif
 
 .PHONY: all clean unit ui-test test previews
 all: $(OUT)/$(MOD_ID).so
 
-$(OUT)/$(MOD_ID).so: $(SRCS) $(HEADERS) | $(OUT)
+$(OUT)/$(MOD_ID).so: $(SRCS) $(HEADERS) Makefile | $(OUT)
 	$(CC) $(CFLAGS) $(LDFLAGS) -o $@ $(SRCS) $(LDLIBS)
 
 $(OUT):
@@ -76,8 +78,8 @@ $(OUT)/render_settings: tools/render_settings.c settings.c $(HEADERS) | $(OUT)
 	$(TEST_CC) -O1 -g -Wall -Wextra -Werror -I. -I$(AZ_SDK_INCLUDE) -o $@ tools/render_settings.c settings.c
 
 ui-test: $(OUT)/render_ui $(OUT)/test_settings
-	./$(OUT)/render_ui /dev/null verify
-	./$(OUT)/test_settings
+	"$(OUT)/render_ui" /dev/null verify
+	"$(OUT)/test_settings"
 
 test:
 	@test -f $(AZ_SDK)/tools/harness/sanitize.sh || \

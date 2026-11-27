@@ -26,6 +26,7 @@
 #define MCP_PAIR_CODE_SIZE (MCP_PAIR_CODE_DIGITS + 1)
 #define MCP_FINGERPRINT_SIZE 65
 #define MCP_CONNECTION_LIMIT 12
+#define MCP_RECEIPT_SECONDS 60u
 
 enum mcp_value_kind { MCP_INT, MCP_NUM, MCP_TEXT, MCP_COORD };
 enum mcp_field {
@@ -65,7 +66,7 @@ struct mcp_deck {
 
 #define MCP_ANALYSIS_KEYS 16
 struct mcp_analysis_record {
-    uint64_t id;
+    uint64_t id, release_order;
     cmcp_json_t *args;
 };
 
@@ -74,12 +75,11 @@ enum mcp_token_status { MCP_TOKEN_UNAVAILABLE, MCP_TOKEN_READY, MCP_TOKEN_SAVING
 enum mcp_pair_action { MCP_PAIR_NONE, MCP_PAIR_START, MCP_PAIR_CANCEL };
 enum mcp_pair_status { MCP_PAIR_UNAVAILABLE, MCP_PAIR_IDLE, MCP_PAIR_PREPARING,
                        MCP_PAIR_READY, MCP_PAIR_USED, MCP_PAIR_EXPIRED, MCP_PAIR_LOCKED };
-enum mcp_screen_page { MCP_SCREEN_HOME, MCP_SCREEN_PAIR, MCP_SCREEN_TOKEN };
-enum mcp_screen_button { MCP_BUTTON_PAIR, MCP_BUTTON_TOKEN, MCP_BUTTON_LIVE,
+enum mcp_screen_page { MCP_SCREEN_HOME, MCP_SCREEN_PAIR };
+enum mcp_screen_button { MCP_BUTTON_PAIR, MCP_BUTTON_LIVE,
                          MCP_BUTTON_SAVED, MCP_BUTTON_BACK, MCP_BUTTON_RESET, MCP_BUTTONS };
 
 struct mcp_token_page {
-    char token[MCP_SECRET_SIZE];
     char url[MCP_URL_SIZE];
     char pair_url[MCP_URL_SIZE], pair_code[MCP_PAIR_CODE_SIZE], fingerprint[MCP_FINGERPRINT_SIZE];
     const char *connection_note;
@@ -97,6 +97,7 @@ struct mcp_runtime {
     const az_observation_v1 *observation;
     const az_analysis_v1 *analysis;
     struct mcp_analysis_record analysis_keys[MCP_ANALYSIS_KEYS];
+    uint64_t analysis_release_order;
     const az_library_v1 *library;
     az_deck_subscription subscription;
     pthread_mutex_t lock;
@@ -116,7 +117,7 @@ struct mcp_runtime {
 
 void mcp_token_screen_init(struct mcp_runtime *runtime);
 void mcp_token_screen_tick(struct mcp_runtime *runtime);
-void mcp_token_publish(struct mcp_runtime *runtime, enum mcp_token_status status, const char *token);
+void mcp_token_publish(struct mcp_runtime *runtime, enum mcp_token_status status);
 void mcp_connection_publish(struct mcp_runtime *runtime, const char *address,
                             unsigned port, const char *note);
 bool mcp_token_requested(struct mcp_runtime *runtime);
@@ -149,6 +150,14 @@ int mcp_submit_tool(const cmcp_json_t *args, struct mcp_runtime *runtime, const 
 int mcp_register_cue_batch(cmcp_server_t *server, struct mcp_runtime *runtime);
 int mcp_cue_intent(const cmcp_json_t *args, struct mcp_intent *intent);
 int mcp_register_command_tools(cmcp_server_t *server, struct mcp_runtime *runtime);
+unsigned mcp_live_grant_generation(const struct mcp_runtime *runtime, uint64_t now);
+unsigned mcp_saved_grant_generation(const struct mcp_runtime *runtime, uint64_t now);
+uint64_t mcp_receipt_deadline(uint64_t now);
+bool mcp_receipt_expired(uint64_t now, uint64_t deadline);
+/* The caller holds the runtime lock. Reaping leaves active jobs in order. */
+void mcp_commands_reap(struct mcp_commands *commands, uint64_t now);
+void mcp_settings_reap(struct mcp_settings *settings, uint64_t now);
+void mcp_panel_reap(struct mcp_panel *panel, uint64_t now);
 void mcp_settings_tick(struct mcp_runtime *runtime);
 int mcp_register_settings_tools(cmcp_server_t *server, struct mcp_runtime *runtime);
 bool mcp_start_library_io(struct mcp_runtime *runtime);

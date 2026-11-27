@@ -17,6 +17,12 @@ int cues_store_init(const az_core_v1 *core, cues_config *out, char *status, size
     snprintf(status, n, "Rules saved to USB");
     return 1;
 }
+int cues_store_start(char *status, size_t n)
+{
+    (void)status;
+    (void)n;
+    return 1;
+}
 int cues_store_request(const cues_config *c, unsigned rev)
 {
     (void)c;
@@ -85,7 +91,7 @@ int main(int argc, char **argv)
     if (argc < 5) {
         fprintf(stderr,
                 "usage: %s out.json width height "
-                "groups|group|rules|phrase|absolute|all-pads|memory-pad|choices|global|files|help|keyboard [day]\n",
+                "groups|group|rules|phrase|absolute|all-pads|memory-pad|choices|global|files|help [day]\n",
                 argv[0]);
         return 2;
     }
@@ -100,6 +106,7 @@ int main(int argc, char **argv)
                        .text_width = tw,
                        .request_redraw = rr};
     cues_settings_init(&core, NULL);
+    cues_settings_start_storage();
     config.group_count = 2;
     for (int i = 0; i < 2; i++) {
         cues_group *g = &config.groups[i];
@@ -160,15 +167,6 @@ int main(int argc, char **argv)
         view = FILES;
     else if (!strcmp(mode, "help"))
         open_help();
-    else if (!strcmp(mode, "keyboard")) {
-        view = GROUP;
-        rebuild();
-        for (int i = 0; i < field_count; i++)
-            if (fields[i].kind == F_TEXT) {
-                open_keyboard(fields[i]);
-                break;
-            }
-    }
     output = fopen(argv[1], "w");
     if (!output)
         return 1;

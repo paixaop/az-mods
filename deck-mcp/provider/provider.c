@@ -217,23 +217,13 @@ static void serve_connection(int fd, az_mcp_provider *provider)
     cmcp_json_free(lease);
 }
 
-static bool await_first_tick(const az_mcp_provider *provider)
-{
-    uint64_t deadline = az_mcp_clock() + AZ_MCP_LEASE_NS;
-    while (!atomic_load(&provider->stopping) && az_mcp_before(az_mcp_clock(), deadline)) {
-        if (leased(provider))
-            return true;
-        delay(50);
-    }
-    return false;
-}
-
 static void *provider_worker(void *user)
 {
     az_mcp_provider *provider = user;
-    bool started = await_first_tick(provider);
-    while (started && leased(provider)) {
-        if (clear_unused(provider)) {
+    /* An expired overlay lease closes the connection. Keep the worker
+     * available to register again when ticks resume. */
+    while (!atomic_load(&provider->stopping)) {
+        if (clear_unused(provider) && leased(provider)) {
             int fd = az_mcp_connect();
             if (fd >= 0) {
                 serve_connection(fd, provider);

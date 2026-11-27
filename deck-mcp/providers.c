@@ -15,7 +15,6 @@
 
 #define PROVIDER_JOBS 32
 #define TOOL_NAME_BYTES (2 * AZ_MCP_NAME_LIMIT + 2)
-#define TRACKED_RESULT_SECONDS 60
 enum provider_job_phase { PROVIDER_QUEUED, PROVIDER_SENT, PROVIDER_DONE };
 
 struct provider_connection;
@@ -32,6 +31,7 @@ struct provider_job {
     uint64_t id, deadline, collect_until;
     enum provider_job_phase phase;
     enum az_mcp_grant grant;
+    unsigned generation;
     int status;
     bool uncertain;
     char key[MCP_KEY_SIZE], name[TOOL_NAME_BYTES];
@@ -71,14 +71,14 @@ static const struct mcp_provider_policy *policy_for(const struct mcp_config *con
     return NULL;
 }
 
-static bool local_grant(const struct mcp_runtime *runtime, enum az_mcp_grant grant)
+static unsigned local_grant(const struct mcp_runtime *runtime, enum az_mcp_grant grant)
 {
     switch (grant) {
-    case AZ_MCP_READ: return true;
-    case AZ_MCP_LIVE: return atomic_load(&runtime->commands.grant) != 0;
-    case AZ_MCP_SAVED: return az_mcp_before(az_mcp_clock(), atomic_load(&runtime->saved_edits));
+    case AZ_MCP_READ: return 1;
+    case AZ_MCP_LIVE: return mcp_live_grant_generation(runtime, az_mcp_clock());
+    case AZ_MCP_SAVED: return mcp_saved_grant_generation(runtime, az_mcp_clock());
     }
-    return false;
+    return 0;
 }
 
 static void finish_job(struct provider_job *job, int status, bool uncertain)
@@ -86,7 +86,7 @@ static void finish_job(struct provider_job *job, int status, bool uncertain)
     job->phase = PROVIDER_DONE;
     job->status = status;
     job->uncertain = uncertain;
-    job->collect_until = az_mcp_clock() + TRACKED_RESULT_SECONDS * AZ_MCP_NS;
+    job->collect_until = mcp_receipt_deadline(az_mcp_clock());
     job->tool = NULL;
     job->connection = NULL;
 }
@@ -133,7 +133,8 @@ static cmcp_json_t *job_json(const struct mcp_providers *providers, const struct
     return out;
 }
 
-static struct provider_job *queue_job(struct provider_tool *tool, const cmcp_json_t *args, const char *key)
+static struct provider_job *queue_job(struct provider_tool *tool, const cmcp_json_t *args,
+                                      const char *key, unsigned generation)
 {
     struct provider_connection *connection = tool->connection;
     struct mcp_providers *providers = connection->providers;
@@ -144,7 +145,7 @@ static struct provider_job *queue_job(struct provider_tool *tool, const cmcp_jso
     if (!copy)
         return NULL;
     *job = (struct provider_job){ .connection = connection, .tool = tool, .args = copy,
-        .grant = tool->grant, .id = ++providers->sequence, .status = AZ_PENDING,
+        .grant = tool->grant, .generation = generation, .id = ++providers->sequence, .status = AZ_PENDING,
         .deadline = az_mcp_clock() + AZ_MCP_CALL_NS };
     snprintf(job->name, sizeof job->name, "%s", tool->name);
     if (key)
@@ -172,9 +173,10 @@ static int invoke_tool(const cmcp_json_t *args, void *user, cmcp_handler_ctx_t *
             return mcp_tool_error("This provider key already belongs to a different request.", content, is_error);
         return mcp_tool_result(ctx, job_json(providers, prior), content);
     }
-    if (!local_grant(providers->runtime, tool->grant))
+    unsigned generation = local_grant(providers->runtime, tool->grant);
+    if (!generation)
         return mcp_tool_error("This action requires a local control grant.", content, is_error);
-    struct provider_job *job = queue_job(tool, args, key);
+    struct provider_job *job = queue_job(tool, args, key, generation);
     return job ? mcp_tool_result(ctx, job_json(providers, job), content)
                : mcp_tool_error("The provider operation ledger is full.", content, is_error);
 }
@@ -327,7 +329,7 @@ static cmcp_json_t *call_message(const struct provider_job *job)
 
 static bool send_call(struct provider_connection *connection, struct provider_job *job)
 {
-    if (!local_grant(connection->providers->runtime, job->grant)) {
+    if (local_grant(connection->providers->runtime, job->grant) != job->generation) {
         finish_job(job, AZ_CANCELLED, false);
         return send_message(connection, az_mcp_message("idle"));
     }
@@ -481,12 +483,11 @@ static void expire_connections(struct mcp_providers *providers, uint64_t now)
     }
 }
 
-static void expire_reads(struct mcp_providers *providers, uint64_t now)
+static void expire_results(struct mcp_providers *providers, uint64_t now)
 {
     for (size_t i = 0; i < PROVIDER_JOBS; ++i) {
         struct provider_job *job = &providers->jobs[i];
-        if (job->id && job->phase == PROVIDER_DONE && job->grant == AZ_MCP_READ &&
-            !az_mcp_before(now, job->collect_until))
+        if (job->id && job->phase == PROVIDER_DONE && mcp_receipt_expired(now, job->collect_until))
             forget_job(job);
     }
 }
@@ -495,8 +496,10 @@ void mcp_providers_sweep(struct mcp_providers *providers)
     if (!providers)
         return;
     uint64_t now = az_mcp_clock();
+    if (!now)
+        return;
     expire_connections(providers, now);
-    expire_reads(providers, now);
+    expire_results(providers, now);
 }
 
 struct mcp_providers *mcp_providers_start(struct event_base *base, cmcp_server_t *server,

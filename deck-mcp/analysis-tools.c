@@ -106,16 +106,26 @@ static int start_native_analysis(struct mcp_runtime *runtime, const cmcp_json_t 
 
 static struct mcp_analysis_record *find_analysis_record(struct mcp_runtime *runtime, const char *key)
 {
-    struct mcp_analysis_record *free_record = NULL;
     for (size_t i = 0; i < MCP_ANALYSIS_KEYS; ++i) {
         struct mcp_analysis_record *record = &runtime->analysis_keys[i];
         const char *prior = az_mcp_string(record->args, "key");
         if (prior && !strcmp(prior, key))
             return record;
-        if (!record->id && !free_record)
-            free_record = record;
     }
-    return free_record;
+    return NULL;
+}
+
+static struct mcp_analysis_record *analysis_slot(struct mcp_runtime *runtime)
+{
+    struct mcp_analysis_record *oldest = NULL;
+    for (size_t i = 0; i < MCP_ANALYSIS_KEYS; ++i) {
+        struct mcp_analysis_record *record = &runtime->analysis_keys[i];
+        if (!record->id)
+            return record;
+        if (record->release_order && (!oldest || record->release_order < oldest->release_order))
+            oldest = record;
+    }
+    return oldest;
 }
 
 static bool analysis_grant(const struct mcp_runtime *runtime, const cmcp_json_t *args)
@@ -130,7 +140,7 @@ static int analysis_retry(struct mcp_analysis_record *record, const cmcp_json_t 
     if (!cmcp_json_equal(record->args, args))
         return AZ_INVALID;
     *id = record->id;
-    return AZ_OK;
+    return record->release_order ? AZ_STALE : AZ_OK;
 }
 
 static int retain_analysis(struct mcp_runtime *runtime, struct mcp_analysis_record *record,
@@ -140,10 +150,12 @@ static int retain_analysis(struct mcp_runtime *runtime, struct mcp_analysis_reco
     if (!copy)
         return AZ_FAILED;
     int status = start_native_analysis(runtime, args, id);
-    if (status == AZ_OK)
+    if (status == AZ_OK) {
+        cmcp_json_free(record->args);
         *record = (struct mcp_analysis_record){ .id = *id, .args = copy };
-    else
+    } else {
         cmcp_json_free(copy);
+    }
     return status;
 }
 
@@ -153,10 +165,11 @@ static int analysis_start(struct mcp_runtime *runtime, const cmcp_json_t *args, 
     if (!mcp_session_arg(runtime, args) || !key || !key[0] || strlen(key) >= MCP_KEY_SIZE)
         return AZ_INVALID;
     struct mcp_analysis_record *record = find_analysis_record(runtime, key);
+    if (record)
+        return analysis_retry(record, args, id);
+    record = analysis_slot(runtime);
     if (!record)
         return AZ_LIMIT;
-    if (record->id)
-        return analysis_retry(record, args, id);
     if (!analysis_grant(runtime, args))
         return AZ_CANCELLED;
     return retain_analysis(runtime, record, args, id);
@@ -258,6 +271,25 @@ static int analysis_result(const az_analysis_v1 *api, uint64_t id, const cmcp_js
     return status;
 }
 
+static void retire_analysis_record(struct mcp_runtime *runtime, uint64_t id)
+{
+    for (size_t i = 0; i < MCP_ANALYSIS_KEYS; ++i) {
+        struct mcp_analysis_record *record = &runtime->analysis_keys[i];
+        if (record->id == id && !record->release_order) {
+            record->release_order = ++runtime->analysis_release_order;
+            return;
+        }
+    }
+}
+
+static int analysis_release(struct mcp_runtime *runtime, uint64_t id)
+{
+    int status = runtime->analysis->release(MCP_ID, id);
+    if (status == AZ_OK || status == AZ_STALE)
+        retire_analysis_record(runtime, id);
+    return status;
+}
+
 static int analysis_control(struct mcp_runtime *runtime, const cmcp_json_t *args,
                              const char *action, uint64_t id, cmcp_json_t *out)
 {
@@ -271,7 +303,7 @@ static int analysis_control(struct mcp_runtime *runtime, const cmcp_json_t *args
     if (!strcmp(action, "cancel") && AZ_ANALYSIS_HAS(api, cancel))
         return api->cancel(MCP_ID, id);
     if (!strcmp(action, "release") && AZ_ANALYSIS_HAS(api, release))
-        return api->release(MCP_ID, id);
+        return analysis_release(runtime, id);
     return AZ_UNSUPPORTED;
 }
 

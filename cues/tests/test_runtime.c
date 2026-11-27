@@ -16,6 +16,8 @@ static int maps_mode;
 static const az_screen_v1 screen = { .size = sizeof screen };
 static az_command_request submitted[16];
 static int submissions, acknowledgements, cancellations, threads, refusals;
+static int refuse_screen, refuse_surface, refuse_watch, refuse_thread;
+static int settings_starts, watches_released;
 static int acknowledge_busy, phrase_available = 1, confirmations,
                              planned_count = 2;
 static int planning_status = AZ_OK;
@@ -43,6 +45,8 @@ static az_surface *create_surface(const char *id, const az_surface_v1 *s)
     static uintptr_t serial;
     (void)id;
     assert(s->views == AZ_VIEW_BIT(AZ_VIEW_DECK));
+    if (refuse_surface)
+        return NULL;
     assert(surface_count < 2);
     surface_descriptors[surface_count++] = *s;
     return (az_surface *)++serial;
@@ -99,6 +103,11 @@ const az_screen_v1 *cues_settings_init(const az_core_v1 *core,
     (void)core;
     (void)changed;
     return &screen;
+}
+void cues_settings_start_storage(void)
+{
+    assert(listener && threads);
+    ++settings_starts;
 }
 const cues_config *cues_settings_config(void) { return &config; }
 void cues_settings_status(const char *text)
@@ -182,14 +191,17 @@ static int watch(const char *id, const az_deck_watch_v1 *w,
 {
     (void)u;
     assert(!strcmp(id, CUES_ID) && w->deck_mask == 15);
+    if (refuse_watch)
+        return AZ_FAILED;
     listener = fn;
     *s = 1;
     return AZ_OK;
 }
 static int release_watch(const char *id, az_deck_subscription s)
 {
-    (void)id;
-    (void)s;
+    assert(!strcmp(id, CUES_ID) && s == 1 && listener);
+    ++watches_released;
+    listener = NULL;
     return AZ_OK;
 }
 static int submit(const char *id, const az_command_request *r,
@@ -248,10 +260,10 @@ static int cancel(const char *id, uint64_t request, az_command_result *out)
 static int start_thread(const char *id, const char *name, void *(*fn)(void *),
                         void *arg)
 {
-    (void)id;
-    (void)name;
-    (void)fn;
-    (void)arg;
+    assert(!strcmp(id, CUES_ID) && !strcmp(name, "cues-plan") && fn == plan_worker && !arg);
+    assert(listener);
+    if (refuse_thread)
+        return -1;
     ++threads;
     return 0;
 }
@@ -259,7 +271,7 @@ static int register_screen(const char *id, const az_screen_v1 *s)
 {
     (void)id;
     assert(s == &screen);
-    return 0;
+    return refuse_screen ? -1 : 0;
 }
 static int get_target(int deck, uint64_t epoch, az_command_target_v1 *out)
 {
@@ -321,6 +333,26 @@ static az_core_v1 core = { .abi = AZ_MOD_ABI,
                            .draw_rect = draw_border,
                            .draw_text = draw_label,
                            .color = draw_color };
+
+static void failed_startup(void)
+{
+    refuse_screen = 1;
+    assert(init(&core) == -3 && !surface_count);
+    refuse_screen = 0;
+    refuse_surface = 1;
+    assert(init(&core) == -6 && !listener);
+    refuse_surface = 0;
+    refuse_watch = 1;
+    assert(init(&core) == -5 && !listener);
+    refuse_watch = 0;
+    surface_count = 0;
+    refuse_thread = 1;
+    assert(init(&core) == -4 && !subscription && !listener && watches_released == 1);
+    refuse_thread = 0;
+    surface_count = 0;
+    assert(!threads && !settings_starts);
+}
+
 static az_status_field_info_v1 receipt(uint64_t epoch, unsigned scope,
                                        unsigned count)
 {
@@ -681,6 +713,7 @@ int main(void)
     assert(az_mod_v1_entry()->on_frame == NULL &&
            !strcmp(az_mod_v1_entry()->id, "cues"));
     assert(init(NULL) == -1);
+    failed_startup();
     config.enabled = 1;
     live = (az_deck_snapshot){ .size = sizeof live,
                                .version = AZ_DATA_VERSION,
@@ -701,7 +734,7 @@ int main(void)
                                      .native_load_generation = 15,
                                      .revision = 100,
                                      .source_rate_hz = 48000 };
-    assert(init(&core) == 0 && threads == 1 && listener);
+    assert(init(&core) == 0 && threads == 1 && settings_starts == 1 && listener);
 #ifdef CUES_MCP
     assert(providers_started == 1);
 #endif

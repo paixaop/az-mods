@@ -1,6 +1,7 @@
 /* SPDX-License-Identifier: GPL-3.0-only */
 #include "deck-mcp.h"
 #include "providers.h"
+#include "provider/wire.h"
 
 #include <stdio.h>
 #include <string.h>
@@ -81,7 +82,7 @@ static int init(const az_core_v1 *core)
 static void tick(void)
 {
     mcp_publish(&runtime);
-    mcp_commands_tick(&runtime);
+    mcp_commands_tick(&runtime, az_mcp_clock());
     mcp_settings_tick(&runtime);
     mcp_token_screen_tick(&runtime);
 }

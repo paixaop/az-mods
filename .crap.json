@@ -6,7 +6,8 @@
     "beatport-remember/",
     "cues/",
     "deck-mcp/",
-    "set-planner/"
+    "set-planner/",
+    "youtube/"
   ],
   "exclude": [
     "*/tests/*",

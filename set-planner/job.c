@@ -30,10 +30,13 @@ void sp_discard_plan(SpModel *model)
 {
     free(model->target);
     free(model->moves);
+    free(model->timeline.starts);
+    model->timeline = (SpTimeline){0};
     model->target = NULL;
     model->moves = NULL;
     model->move_count = 0;
     model->verified = 0;
+    model->pending_move = (az_playlist_move_result_v1){0};
     model->can_resume = false;
 }
 
@@ -106,8 +109,8 @@ static int plan_playlist(SpRuntime *runtime)
     model->move_count = sp_plan_moves(model->target, count, model->moves, &runtime->options);
     if (model->move_count < 0)
         return AZ_FAILED;
-    model->original = sp_measure(model->tracks, count, NULL, &runtime->options);
-    model->planned = sp_measure(model->tracks, count, model->target, &runtime->options);
+    if (!sp_build_timeline(model, &runtime->options))
+        return AZ_FAILED;
     model->can_resume = model->move_count > 0;
     return sp_order_check(runtime);
 }
@@ -179,21 +182,22 @@ static int wait_for_move(SpRuntime *runtime, uint64_t receipt, az_playlist_move_
     return AZ_FAILED;
 }
 
-static int verify_move(SpRuntime *runtime, int *expected, uint64_t *revision, SpMove move,
-                       const az_playlist_move_result_v1 *result)
+static int verify_move(SpRuntime *runtime, int *expected, uint64_t *revision)
 {
-    if (result->outcome == AZ_PLAYLIST_NOT_MOVED)
-        return result->status == AZ_OK ? AZ_FAILED : result->status;
+    SpModel *model = &runtime->model;
+    SpMove move = model->moves[model->verified];
     sp_relocate(expected, move.from, move.to);
     int status = read_back(runtime, expected, revision);
     if (status != AZ_OK)
         return status;
-    ++runtime->model.verified;
-    atomic_store(&runtime->progress, runtime->model.verified);
-    runtime->sync_failed = result->device_library != AZ_PDB_CURRENT;
+    az_playlist_move_result_v1 result = model->pending_move;
+    model->pending_move = (az_playlist_move_result_v1){0};
+    ++model->verified;
+    atomic_store(&runtime->progress, model->verified);
+    runtime->sync_failed = result.device_library != AZ_PDB_CURRENT;
     if (runtime->sync_failed)
         return AZ_FAILED;
-    return result->outcome == AZ_PLAYLIST_MOVED ? result->status : AZ_FAILED;
+    return result.outcome == AZ_PLAYLIST_MOVED ? result.status : AZ_FAILED;
 }
 
 static int apply_move(SpRuntime *runtime, int *expected, uint64_t *revision)
@@ -211,16 +215,28 @@ static int apply_move(SpRuntime *runtime, int *expected, uint64_t *revision)
         model->can_resume = false;
         return status;
     }
-    return verify_move(runtime, expected, revision, move, &result);
+    if (result.outcome == AZ_PLAYLIST_NOT_MOVED)
+        return result.status == AZ_OK ? AZ_FAILED : result.status;
+    model->pending_move = result;
+    return verify_move(runtime, expected, revision);
+}
+
+static int read_resume_order(SpRuntime *runtime, int *expected, uint64_t *revision)
+{
+    const SpModel *model = &runtime->model;
+    if (model->pending_move.outcome != AZ_PLAYLIST_NOT_MOVED)
+        return verify_move(runtime, expected, revision);
+    int status = read_back(runtime, expected, revision);
+    if (status == AZ_OK && !model->verified && *revision != model->source.identity.revision)
+        return AZ_STALE;
+    return status;
 }
 
 static int apply_moves(SpRuntime *runtime, int *expected)
 {
     SpModel *model = &runtime->model;
     uint64_t revision = 0;
-    int status = read_back(runtime, expected, &revision);
-    if (status == AZ_OK && !model->verified && revision != model->source.identity.revision)
-        status = AZ_STALE;
+    int status = read_resume_order(runtime, expected, &revision);
     while (status == AZ_OK && model->verified < model->move_count) {
         if (sp_cancelled(runtime))
             return AZ_CANCELLED;
@@ -234,6 +250,7 @@ int sp_apply_preview(SpRuntime *runtime)
     SpModel *model = &runtime->model;
     if (!model->can_resume)
         return AZ_INVALID;
+    runtime->sync_failed = false;
     int count = (int)model->source.identity.total;
     int *expected = malloc((size_t)count * sizeof *expected);
     if (!expected)

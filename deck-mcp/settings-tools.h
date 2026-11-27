@@ -13,7 +13,8 @@ struct mcp_setting_change {
     char key[MCP_SETTING_KEY_BYTES];
     char setting[sizeof(((az_official_setting_v1 *)0)->key)];
     int expected, value, status;
-    uint64_t deadline;
+    uint64_t deadline, collect_until;
+    unsigned generation;
 };
 
 struct mcp_settings {

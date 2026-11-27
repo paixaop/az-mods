@@ -1271,6 +1271,21 @@ static int start_observation(void)
     return 0;
 }
 
+static int start_runtime(void)
+{
+    int status = start_observation();
+    if (status)
+        return status;
+    if (C->thread_start(CUES_ID, "cues-plan", plan_worker, NULL)) {
+        (void)O->deck_status_release(CUES_ID, subscription);
+        subscription = 0;
+        return -4;
+    }
+    /* Storage is optional. Once the planner starts, init cannot fail. */
+    cues_settings_start_storage();
+    return 0;
+}
+
 #ifdef CUES_MCP
 static void start_mcp(const az_core_v1 *core)
 {
@@ -1290,9 +1305,7 @@ static int init(const az_core_v1 *core)
     if (!screen || C->register_screen(CUES_ID, screen))
         return -3;
     if (!create_surfaces()) return -6;
-    if (C->thread_start(CUES_ID, "cues-plan", plan_worker, NULL))
-        return -4;
-    int status = start_observation();
+    int status = start_runtime();
 #ifdef CUES_MCP
     if (!status)
         start_mcp(core);

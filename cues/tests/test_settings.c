@@ -23,6 +23,12 @@ int cues_store_init(const az_core_v1 *core, cues_config *out, char *status, size
     snprintf(status, n, "Create a group to begin");
     return 1;
 }
+int cues_store_start(char *status, size_t n)
+{
+    (void)status;
+    (void)n;
+    return 1;
+}
 int cues_store_request(const cues_config *value, unsigned rev)
 {
     if (pending_save)
@@ -163,19 +169,27 @@ static void press_field(const char *name)
     }
     assert(!"missing field");
 }
-static void key(int arg)
+static az_text_entry_v1 prompt;
+static char initial_text[AZ_TEXT_ENTRY_MAX_BYTES + 1];
+
+static int request_text(const char *id, const az_text_entry_v1 *entry)
 {
-    for (int attempts = 0; attempts < 50; attempts++) {
-        paint(800, 420);
-        for (int i = 0; i < hit_count; i++)
-            if (hits[i].kind == H_KEY && hits[i].arg == arg) {
-                tap_hit(i);
-                return;
-            }
-        press(H_KEY_PAGE, 1);
-    }
-    assert(!"missing key");
+    assert(!strcmp(id, CUES_ID) && entry->size == sizeof *entry);
+    assert(!strcmp(entry->submit, "Save") && entry->on_result);
+    prompt = *entry;
+    snprintf(initial_text, sizeof initial_text, "%s", entry->initial);
+    return AZ_OK;
 }
+
+static const char *reply_text(int status, const char *text)
+{
+    assert(prompt.on_result);
+    const char *error = prompt.on_result(status, text, prompt.user);
+    if (!error)
+        prompt = (az_text_entry_v1){0};
+    return error;
+}
+
 static void choose(const char *name, int value)
 {
     press_field(name);
@@ -350,8 +364,10 @@ int main(void)
                         .draw_rect = rect,
                         .color = palette,
                         .text_width = text_width,
-                        .request_redraw = redraw_request };
+                        .request_redraw = redraw_request,
+                        .text_entry = request_text };
     assert(cues_settings_init(&core, changed));
+    cues_settings_start_storage();
     int status_redraws = redraws;
     cues_settings_status("Waiting for analysis");
     assert(redraws == status_redraws + 1 && !strcmp(runtime_status, "Waiting for analysis"));
@@ -395,9 +411,8 @@ int main(void)
     check_field("Offset units", 1);
     choose("Offset units", CUES_BEATS);
     press_field("Offset (negative = before)");
-    strcpy(key_buffer, "-16");
-    paint(800, 420);
-    press(H_KEY_SAVE, 0);
+    assert(!strcmp(initial_text, "0"));
+    assert(!reply_text(AZ_OK, "-16"));
     assert(rule_edit.offset == -16 && rule_edit.offset_unit == CUES_BEATS);
     press_action(A_RULE_OFFSET);
     check_field("Offset units", 0);
@@ -435,23 +450,16 @@ int main(void)
     press(H_CHOICE, CUES_SECONDS);
     assert(rule_edit.unit == CUES_SECONDS);
     press_field("Position (zero-based)");
-    assert(keyboard && numeric);
-    snprintf(key_buffer, sizeof key_buffer, "not-a-number");
-    paint(800, 420);
-    press(H_KEY_SAVE, 0);
-    assert(keyboard && key_error[0]);
-    snprintf(key_buffer, sizeof key_buffer, "16.5");
-    paint(800, 420);
-    press(H_KEY_SAVE, 0);
-    assert(!keyboard && rule_edit.position == 16.5);
+    assert(editing_field && !strcmp(prompt.title, "Position (zero-based)"));
+    assert(reply_text(AZ_OK, "not-a-number"));
+    assert(editing_field && strstr(storage_status, "valid number"));
+    assert(reply_text(AZ_OK, "-1"));
+    assert(!reply_text(AZ_OK, "16.5"));
+    assert(!editing_field && rule_edit.position == 16.5);
     press_field("Name template");
-    assert(keyboard && !numeric);
-    while (key_buffer[0])
-        key(-2);
-    key(0);
-    key(1);
-    paint(800, 420);
-    press(H_KEY_SAVE, 0);
+    assert(editing_field && !strcmp(initial_text, "{phrase}"));
+    assert(prompt.max_bytes == sizeof rule_edit.name - 1);
+    assert(!reply_text(AZ_OK, "AB"));
     assert(!config.groups[0].rule_count && !strcmp(rule_edit.name, "AB"));
     paint(800, 420);
     press(H_SAVE_RULE, 0);
@@ -530,7 +538,7 @@ int main(void)
     assert(!config.group_count && cues_settings_config()->group_count == 1);
     press_action(A_APPLY);
     assert(!cues_settings_config()->group_count);
-    /* Every page/conditional field/keyboard fits offset and docked rectangles. */
+    /* Every page and conditional field fits offset and docked rectangles. */
     config.group_count = 1;
     cues_group_default(&config.groups[0], &config);
     config.groups[0].rule_count = 1;
@@ -541,7 +549,6 @@ int main(void)
     for (unsigned z = 0; z < sizeof sizes / sizeof sizes[0]; z++)
         for (int v = 0; v <= DELETE_RULE; v++)
             for (int anchor = 0; anchor < 2; anchor++) {
-                keyboard = 0;
                 go(v);
                 config.groups[0].rules[0].anchor = anchor;
                 config.groups[0].rules[0].loop_mode = CUES_LOOP_FIXED;
@@ -550,15 +557,7 @@ int main(void)
                     page = pg;
                     paint(sizes[z][0], sizes[z][1]);
                 }
-                keyboard = 1;
-                numeric = 0;
-                key_field.capacity = 128;
-                for (int pg = 0; pg < 4; pg++) {
-                    key_page = pg;
-                    paint(sizes[z][0], sizes[z][1]);
-                }
             }
-    keyboard = 0;
     view = GLOBAL;
     page = 0;
     paint(800, 420);
@@ -574,28 +573,20 @@ int main(void)
     press(H_TAB, 1);
     assert(view == GLOBAL);
     press_field("Maximum memory cues");
-    assert(keyboard && numeric && key_field.kind == F_INT);
-    strcpy(key_buffer, "3.5");
-    paint(800, 420);
-    press(H_KEY_SAVE, 0);
-    assert(keyboard && strstr(key_error, "integer"));
-    strcpy(key_buffer, "9");
-    paint(800, 420);
-    press(H_KEY_SAVE, 0);
-    assert(!keyboard && config.max_memory == 9);
+    assert(editing_field && entry_field.kind == F_INT);
+    assert(reply_text(AZ_OK, "3.5"));
+    assert(editing_field && strstr(storage_status, "integer"));
+    assert(!reply_text(AZ_OK, "9"));
+    assert(!editing_field && config.max_memory == 9);
     paint(800, 420);
     press(H_TAB, 0);
     press_action(A_OPEN_GROUP);
     assert(view == RULES);
     press_action(A_EDIT_GROUP);
     press_field("Group name");
-    paint(240, 180);
-    int old_key_page = key_page;
-    press(H_KEY_PAGE, 1);
-    assert(key_page == old_key_page + 1);
-    paint(240, 180);
-    press(H_KEY_CANCEL, 0);
-    assert(!keyboard && view == GROUP);
+    assert(editing_field && !strcmp(prompt.title, "Group name"));
+    assert(!reply_text(AZ_CANCELLED, NULL));
+    assert(!editing_field && view == GROUP && !strcmp(config.groups[0].name, initial_text));
     press_action(A_RULES);
     press_action(A_OPEN_RULE);
     assert(view == RULE && config.groups[0].rule_count == 1);
@@ -613,7 +604,7 @@ int main(void)
     test_rule_toolbar_icons();
     test_rule_help();
     puts(
-        "Settings passed: staged Apply, discard/save, CRUD, text/numeric keyboard, knob, touch "
+        "Settings passed: staged Apply, discard/save, CRUD, native text requests, knob, touch "
         "bounds and paging");
     return 0;
 }

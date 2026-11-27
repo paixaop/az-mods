@@ -1,0 +1,16 @@
+{
+  "azmod": 1,
+  "id": "youtube",
+  "name": "YouTube",
+  "version": "0.3.0",
+  "author": "pedro",
+  "summary": "Search YouTube and prepare audio for native deck loading.",
+  "description": "Find tracks through the deck search and choose temporary streaming or import to the USB library.",
+  "license": "GPL-3.0-only",
+  "source": "https://github.com/paixaop/az-mods/tree/main/youtube",
+  "category": "tools",
+  "api": 2,
+  "firmware": ["ep147-9e9454e357389ece"],
+  "hooks": false,
+  "min_core": "1.2.9"
+}

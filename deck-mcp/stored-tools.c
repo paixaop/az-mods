@@ -1,7 +1,7 @@
 /* SPDX-License-Identifier: GPL-3.0-only */
 #include "data-tools.h"
 
-#include <openssl/evp.h>
+#include <mbedtls/base64.h>
 #include <string.h>
 
 #define MAX_WAVE_COLUMNS 512
@@ -99,8 +99,9 @@ static cmcp_json_t *base64(const uint8_t *bytes, uint32_t count)
         return cmcp_json_new_string("");
     if (!bytes || count > MAX_WAVE_COLUMNS * 6)
         return cmcp_json_new_null();
-    int length = EVP_EncodeBlock((unsigned char *)encoded, bytes, (int)count);
-    return length >= 0 ? cmcp_json_new_string_n(encoded, (size_t)length) : cmcp_json_new_null();
+    size_t length;
+    return mbedtls_base64_encode((unsigned char *)encoded, sizeof encoded, &length, bytes, count) == 0
+               ? cmcp_json_new_string_n(encoded, length) : cmcp_json_new_null();
 }
 
 static uint32_t stored_count(const az_track_snapshot *snap, uint32_t component)

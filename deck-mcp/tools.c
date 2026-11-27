@@ -49,10 +49,9 @@ static int capabilities(const cmcp_json_t *args, void *user, cmcp_handler_ctx_t 
     mcp_set(out, "positionHz", cmcp_json_new_int(5));
     mcp_set(out, "statusTopics", mcp_id(mcp_watch_topics()));
     mcp_set(out, "commandAccess", cmcp_json_new_bool(runtime->commands.api != NULL));
-    mcp_set(out, "armGeneration", cmcp_json_new_int(atomic_load(&runtime->commands.grant)));
-    unsigned saved = az_mcp_before(az_mcp_clock(), atomic_load(&runtime->saved_edits))
-        ? atomic_load(&runtime->saved_generation) : 0;
-    mcp_set(out, "savedArmGeneration", cmcp_json_new_int(saved));
+    uint64_t now = az_mcp_clock();
+    mcp_set(out, "armGeneration", cmcp_json_new_int(mcp_live_grant_generation(runtime, now)));
+    mcp_set(out, "savedArmGeneration", cmcp_json_new_int(mcp_saved_grant_generation(runtime, now)));
     return mcp_tool_result(ctx, out, content);
 }
 

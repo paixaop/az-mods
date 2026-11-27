@@ -1,17 +1,21 @@
 /* SPDX-License-Identifier: GPL-3.0-only */
-#include "mod.h"
+#include "ui.h"
 #include <math.h>
 #include <stdio.h>
 #include <string.h>
 
-enum { HEADER = 54, COL_HEADER = 36, FOOTER = 48, PREVIEW_ROWS = 1, INSET = 16 };
+enum { COL_HEADER = 36, PREVIEW_ROWS = 1 };
 static const int tempo_limits[] = {18, 4, 8, 12};
 
 static void open_page(SpRuntime *runtime, enum SpPage page)
 {
+    sp_reset_drag(runtime);
     runtime->page = page;
     runtime->cursor = 0;
     runtime->top = 0;
+    runtime->compare = false;
+    runtime->chart_detail = false;
+    runtime->chart_first = 0;
 }
 
 static int energy_rows(SpEnergyChoice choice)
@@ -66,14 +70,14 @@ static const char *occurrence_title(enum SpOccurrence occurrence)
 
 typedef struct { const char *label, *value; } SettingRow;
 
-static const char *display_title(const SpTrack *track)
+const char *sp_display_title(const SpTrack *track)
 {
     return *track->title ? track->title : "(Untitled track)";
 }
 
 static const char *endpoint(const SpModel *model, int index)
 {
-    return index < 0 ? "Automatic" : display_title(&model->tracks[index]);
+    return index < 0 ? "Automatic" : sp_display_title(&model->tracks[index]);
 }
 
 static const char *toggle_label(bool enabled)
@@ -161,14 +165,7 @@ static const char *job_title(enum SpJob job)
     }
 }
 
-typedef struct {
-    const SpRuntime *runtime;
-    const az_core_v1 *core;
-    az_draw *draw;
-    uint32_t bg, stripe, head, rule, select, text, dim, selected_text, action;
-} Paint;
-
-static uint32_t mix(uint32_t from, uint32_t to, unsigned percent)
+uint32_t sp_mix(uint32_t from, uint32_t to, unsigned percent)
 {
     uint32_t result = 0;
     for (int shift = 0; shift <= 16; shift += 8) {
@@ -178,21 +175,27 @@ static uint32_t mix(uint32_t from, uint32_t to, unsigned percent)
     return result;
 }
 
-static Paint palette(const SpRuntime *runtime, az_draw *draw)
+static Paint palette(SpRuntime *runtime, az_draw *draw)
 {
     const az_core_v1 *c = runtime->core;
     uint32_t bg = c->color(AZ_COL_BG), ink = c->color(AZ_COL_TEXT);
     if (c->ui_theme && c->ui_theme() == 0)
-        return (Paint){.runtime = runtime, .core = c, .draw = draw, .bg = 0x000000,
-            .stripe = 0x262626, .head = 0x383838, .rule = 0x515151, .select = 0x007acc,
-            .text = 0xffffff, .dim = 0xbfbfbf, .selected_text = 0xffffff, .action = 0x1074dc};
+        return (Paint){.runtime = runtime, .core = c, .draw = draw, .bg = 0x0e1319,
+            .stripe = 0x171f29, .head = 0x1d2732, .rule = 0x33414f, .select = 0x203d4a,
+            .text = 0xf0f5f7, .dim = 0x9dabb9, .selected_text = 0xffffff, .action = 0x126479,
+            .energy = 0x48dfb6, .target = 0xf0f5f7, .tempo = 0x70baff,
+            .good = 0x48dfb6, .warning = 0xffc37a, .clash = 0xff8992};
+    bool light = (bg & 255u) > (ink & 255u);
     return (Paint){.runtime = runtime, .core = c, .draw = draw, .bg = bg,
-        .stripe = mix(bg, ink, 5), .head = mix(bg, ink, 12), .rule = mix(bg, ink, 19),
-        .select = mix(bg, 0x77849a, 70), .text = ink, .dim = c->color(AZ_COL_TEXT_DIM),
-        .selected_text = 0xffffff, .action = 0x1074dc};
+        .stripe = sp_mix(bg, ink, 5), .head = sp_mix(bg, ink, 12), .rule = sp_mix(bg, ink, 19),
+        .select = sp_mix(bg, 0x27a6ac, 28), .text = ink, .dim = c->color(AZ_COL_TEXT_DIM),
+        .selected_text = ink, .action = 0x126479, .target = ink,
+        .energy = light ? 0x126a57 : 0x48dfb6, .tempo = light ? 0x135b9d : 0x70baff,
+        .good = light ? 0x126a57 : 0x48dfb6, .warning = light ? 0x874500 : 0xffc37a,
+        .clash = light ? 0xa33347 : 0xff8992};
 }
 
-static void rect(const Paint *p, int x, int y, int w, int h, uint32_t color)
+void sp_rect(const Paint *p, int x, int y, int w, int h, uint32_t color)
 {
     if (w > 0 && h > 0)
         p->core->fill_rect(p->draw, x, y, w, h, color);
@@ -201,6 +204,28 @@ static void rect(const Paint *p, int x, int y, int w, int h, uint32_t color)
 static void text(const Paint *p, int x, int y, const char *label, int px, uint32_t color)
 {
     p->core->draw_text(p->draw, x, y, label, px, color);
+}
+
+void sp_line(const Paint *p, int x0, int y0, int x1, int y1, int width, uint32_t color)
+{
+    if (p->core->draw_line)
+        p->core->draw_line(p->draw, x0, y0, x1, y1, width, color);
+}
+
+void sp_card(const Paint *p, az_rect box)
+{
+    sp_rect(p, box.x, box.y, box.w, box.h, p->rule);
+    sp_rect(p, box.x + 1, box.y + 1, box.w - 2, box.h - 2, p->stripe);
+}
+
+bool sp_contains(az_rect box, int x, int y)
+{
+    return x >= box.x && x < box.x + box.w && y >= box.y && y < box.y + box.h;
+}
+
+bool sp_dashboard(const SpRuntime *r)
+{
+    return r->area.w >= 1000 && r->area.h >= 570;
 }
 
 static uint32_t next_codepoint(const unsigned char **cursor)
@@ -260,7 +285,7 @@ static void fit_label(const Paint *p, const char *label, int px, int width, char
     snprintf(out, size, "%.*s...", (int)lo, label);
 }
 
-static void label(const Paint *p, int x, int y, const char *value, int px, int width, uint32_t color)
+void sp_label(const Paint *p, int x, int y, const char *value, int px, int width, uint32_t color)
 {
     if (width < 16)
         return;
@@ -289,7 +314,9 @@ static int row_start(const SpRuntime *runtime)
 
 static int track_start(const SpRuntime *runtime)
 {
-    return runtime->area.y + HEADER + (table_page(runtime->page) ? COL_HEADER : 0);
+    if (runtime->page == SP_SETUP && sp_dashboard(runtime))
+        return sp_setup_layout(runtime->area).card.y + 89;
+    return runtime->area.y + SP_HEADER + (table_page(runtime->page) ? COL_HEADER : 0);
 }
 
 static int x_at(const SpRuntime *runtime, int percentage)
@@ -302,17 +329,36 @@ static int save_x(const SpRuntime *runtime)
     return x_at(runtime, 82);
 }
 
+static az_rect edit_button(const SpRuntime *r)
+{
+    return (az_rect){save_x(r) - 152, r->area.y + 8, 140, 38};
+}
+
+static bool save_has_progress(const SpModel *model)
+{
+    return model->verified || model->pending_move.outcome != AZ_PLAYLIST_NOT_MOVED;
+}
+
+static bool can_edit_curve(const SpRuntime *r)
+{
+    return sp_dashboard(r) && !save_has_progress(&r->model);
+}
+
 static void draw_save(const Paint *p, az_rect area)
 {
     const SpRuntime *runtime = p->runtime;
     const SpModel *model = &runtime->model;
-    int x = save_x(runtime), width = area.x + area.w - x - INSET;
-    uint32_t color = runtime->cursor == 0 ? p->action : p->head;
-    rect(p, x, area.y + 8, width, 38, color);
+    int x = save_x(runtime), width = area.x + area.w - x - SP_INSET;
+    uint32_t color = p->action;
+    sp_rect(p, x, area.y + 8, width, 38, color);
     char action[80];
-    snprintf(action, sizeof action, "%s (%d moves)", model->verified ? "Resume saving" : "Save order",
+    bool resume = save_has_progress(model);
+    snprintf(action, sizeof action, "%s (%d moves)", resume ? "Resume saving" : "Save order",
              model->move_count - model->verified);
-    label(p, x + 10, area.y + 14, action, 18, width - 20, runtime->cursor == 0 ? 0xffffff : p->text);
+    int px = p->core->text_width(action, 18) > width - 20 ? 15 : 18;
+    sp_label(p, x + 10, area.y + 14, action, px, width - 20, 0xffffff);
+    if (runtime->cursor == 0)
+        sp_rect(p, x, area.y + 43, width, 3, p->energy);
 }
 
 static void draw_order_status(const Paint *p, az_rect area)
@@ -323,21 +369,34 @@ static void draw_order_status(const Paint *p, az_rect area)
         return;
     }
     int x = save_x(p->runtime);
-    char message[80] = "Order already matches";
+    char message[80];
+    snprintf(message, sizeof message, "%s", model->move_count ? "Reopen playlist to save" : "Order already matches");
     if (model->verified)
         snprintf(message, sizeof message, "%d playlist moves verified", model->verified);
-    label(p, x, area.y + 14, message, 16, area.x + area.w - x - INSET, p->dim);
+    sp_label(p, x, area.y + 14, message, 16, area.x + area.w - x - SP_INSET, p->dim);
 }
 
 static void draw_back(const Paint *p, az_rect area)
 {
-    int x = area.x + INSET, y = area.y + 7;
-    rect(p, x, y, 46, 40, p->head);
-    rect(p, x + 13, y + 19, 20, 3, p->text);
+    int x = area.x + SP_INSET, y = area.y + 7;
+    sp_rect(p, x, y, 46, 40, p->head);
+    sp_rect(p, x + 13, y + 19, 20, 3, p->text);
     for (int step = 0; step < 9; ++step) {
-        rect(p, x + 13 + step, y + 19 - step, 3, 2, p->text);
-        rect(p, x + 13 + step, y + 20 + step, 3, 2, p->text);
+        sp_rect(p, x + 13 + step, y + 19 - step, 3, 2, p->text);
+        sp_rect(p, x + 13 + step, y + 20 + step, 3, 2, p->text);
     }
+}
+
+static int preview_actions(const Paint *p, az_rect area)
+{
+    const SpRuntime *r = p->runtime;
+    draw_order_status(p, area);
+    if (!can_edit_curve(r))
+        return save_x(r) - SP_INSET;
+    az_rect edit = edit_button(r);
+    sp_rect(p, edit.x, edit.y, edit.w, edit.h, p->head);
+    sp_label(p, edit.x + 12, edit.y + 6, "Edit curve", 18, edit.w - 24, p->text);
+    return edit.x - SP_INSET;
 }
 
 static void draw_header(const Paint *p, bool working)
@@ -345,20 +404,18 @@ static void draw_header(const Paint *p, bool working)
     const SpRuntime *runtime = p->runtime;
     az_rect area = runtime->area;
     bool planner = runtime->planner_open;
-    int x = area.x + (planner ? 76 : INSET);
-    int right = area.x + area.w - INSET;
-    rect(p, area.x, area.y, area.w, HEADER, p->bg);
-    rect(p, area.x, area.y + HEADER - 1, area.w, 1, p->rule);
+    int x = area.x + (planner ? 76 : SP_INSET);
+    int right = area.x + area.w - SP_INSET;
+    sp_rect(p, area.x, area.y, area.w, SP_HEADER, p->bg);
+    sp_rect(p, area.x, area.y + SP_HEADER - 1, area.w, 1, p->rule);
     if (planner)
         draw_back(p, area);
-    if (!working && runtime->page == SP_ORDER) {
-        draw_order_status(p, area);
-        right = save_x(runtime) - INSET;
-    }
-    label(p, x, area.y + 11, page_title(runtime->page), 21, area.w / 5, p->text);
-    x += area.w / 5;
+    if (!working && runtime->page == SP_ORDER)
+        right = preview_actions(p, area);
+    sp_label(p, x, area.y + 9, page_title(runtime->page), 23, right - x, p->text);
+    x += planner ? 191 : area.w / 5;
     if (!working && planner)
-        label(p, x, area.y + 14, runtime->model.playlist_name, 18, right - x, p->dim);
+        sp_label(p, x, area.y + 14, runtime->model.playlist_name, 18, right - x, p->dim);
 }
 
 static const int columns[] = {1, 7, 54, 76, 85, 92, 100};
@@ -367,32 +424,38 @@ static void column(const Paint *p, int index, int y, const char *value, int px, 
 {
     const SpRuntime *runtime = p->runtime;
     int x = x_at(runtime, columns[index]);
-    label(p, x + 5, y, value, px, x_at(runtime, columns[index + 1]) - x - 10, color);
+    sp_label(p, x + 5, y, value, px, x_at(runtime, columns[index + 1]) - x - 10, color);
 }
 
 static void draw_columns(const Paint *p)
 {
     const SpRuntime *r = p->runtime;
-    int y = r->area.y + HEADER;
-    rect(p, r->area.x, y, r->area.w, COL_HEADER, p->head);
+    int y = r->area.y + SP_HEADER;
+    sp_rect(p, r->area.x, y, r->area.w, COL_HEADER, p->head);
     const char *headers[] = {"#", "Track", "Artist", "BPM", "Key", "Energy"};
     int count = r->page == SP_ORDER ? 6 : 5;
     for (int i = 0; i < count; ++i) {
         if (i)
-            rect(p, x_at(r, columns[i]), y, 1, COL_HEADER, p->rule);
+            sp_rect(p, x_at(r, columns[i]), y, 1, COL_HEADER, p->rule);
         column(p, i, y + 5, headers[i], 18, p->dim);
     }
 }
 
+void sp_energy_value(const SpRuntime *r, const SpInput *input, char *value, size_t size)
+{
+    if (input->energy == SP_MISSING) {
+        snprintf(value, size, "-");
+        return;
+    }
+    bool fallback = input->encoding != AZ_WAVE_PWV7_BANDS || input->energy != r->energy_choice.mode;
+    int score = (int)lround(input->score * 100);
+    snprintf(value, size, "%d%s", score, fallback ? "*" : "");
+}
+
 static void draw_energy(const Paint *p, const SpInput *input, int y, uint32_t color)
 {
-    char energy[24] = "-";
-    if (input->energy != SP_MISSING) {
-        bool fallback = input->encoding != AZ_WAVE_PWV7_BANDS ||
-            input->energy != p->runtime->energy_choice.mode;
-        int score = (int)lround(input->score * 100);
-        snprintf(energy, sizeof energy, "%d%s", score, fallback ? "*" : "");
-    }
+    char energy[24];
+    sp_energy_value(p->runtime, input, energy, sizeof energy);
     column(p, 5, y, energy, 22, color);
 }
 
@@ -429,7 +492,7 @@ static void draw_track_details(const Paint *p, const SpTrack *track, int index, 
     if (incoming.tempo_warning || incoming.key_warning) {
         uint32_t accent = incoming.key_warning ? KEY_WARNING_COLOR : TEMPO_WARNING_COLOR;
         int row_y = y - (r->row_height - 33) / 2;
-        rect(p, r->area.x, row_y, 4, r->row_height - 1, accent);
+        sp_rect(p, r->area.x, row_y, 4, r->row_height - 1, accent);
     }
     transition_cell(p, 3, y, bpm, color, jump, TEMPO_WARNING_COLOR);
     transition_cell(p, 4, y, *track->key_text ? track->key_text : "-", color,
@@ -450,7 +513,7 @@ static void draw_track(const Paint *p, int index, int y, uint32_t color)
     char number[24];
     snprintf(number, sizeof number, "%03d", index);
     column(p, 0, y, number, 22, color);
-    column(p, 1, y, display_title(track), 22, color);
+    column(p, 1, y, sp_display_title(track), 22, color);
     column(p, 2, y, track->artist, 22, color);
     draw_track_details(p, track, index, y, color);
     if (preview)
@@ -462,12 +525,12 @@ static void draw_setting(const Paint *p, int index, int y, uint32_t color)
     const SpRuntime *runtime = p->runtime;
     char local[96];
     SettingRow row = row_content(runtime, index, local, sizeof local);
-    int x = runtime->area.x + INSET;
-    int middle = x_at(runtime, 50), right = runtime->area.x + runtime->area.w - INSET;
-    label(p, x, y, row.label, 21, middle - x - 12, color);
-    label(p, middle, y, row.value, 21, right - middle - 34, color);
-    label(p, right - 22, y, ">", 22, 22, color);
-    rect(p, middle - 12, y - 5, 1, 31, p->rule);
+    int x = runtime->area.x + SP_INSET;
+    int middle = x_at(runtime, 50), right = runtime->area.x + runtime->area.w - SP_INSET;
+    sp_label(p, x, y, row.label, 21, middle - x - 12, color);
+    sp_label(p, middle, y, row.value, 21, right - middle - 34, color);
+    sp_label(p, right - 22, y, ">", 22, 22, color);
+    sp_rect(p, middle - 12, y - 5, 1, 31, p->rule);
 }
 
 static void draw_scrollbar(const Paint *p, int count)
@@ -478,7 +541,7 @@ static void draw_scrollbar(const Paint *p, int count)
     int height = r->visible * r->row_height;
     int thumb = (int)sp_clamp((double)height * r->visible / count, 12, height);
     int y = track_start(r) + (height - thumb) * r->top / (count - r->visible);
-    rect(p, r->area.x + r->area.w - 4, y, 4, thumb, p->rule);
+    sp_rect(p, r->area.x + r->area.w - 4, y, 4, thumb, p->rule);
 }
 
 static void draw_rows(const Paint *p)
@@ -490,7 +553,7 @@ static void draw_rows(const Paint *p)
         bool selected = i == r->cursor;
         uint32_t bg = selected ? p->select : (i % 2 ? p->stripe : p->bg);
         uint32_t fg = selected ? p->selected_text : p->text;
-        rect(p, r->area.x, y, r->area.w, r->row_height - 1, bg);
+        sp_rect(p, r->area.x, y, r->area.w, r->row_height - 1, bg);
         int text_y = y + (r->row_height - (table ? 33 : 31)) / 2;
         if (table)
             draw_track(p, i, text_y, fg);
@@ -500,26 +563,61 @@ static void draw_rows(const Paint *p)
     draw_scrollbar(p, count);
 }
 
+static void setup_control(const Paint *p, az_rect box, int index)
+{
+    const SpRuntime *r = p->runtime;
+    char value[96];
+    SettingRow row = row_content(r, index, value, sizeof value);
+    uint32_t bg = index == 2 ? p->action : (r->cursor == index ? p->select : p->head);
+    uint32_t fg = index == 2 ? 0xffffff : p->text;
+    sp_rect(p, box.x, box.y, box.w, box.h, bg);
+    if (r->cursor == index)
+        sp_rect(p, box.x, box.y, 3, box.h, p->energy);
+    sp_label(p, box.x + 12, box.y + 8, row.label, 18, box.w - 46, fg);
+    if (*row.value)
+        sp_label(p, box.x + 155, box.y + 9, row.value, 17, box.w - 192, p->dim);
+    sp_label(p, box.x + box.w - 27, box.y + 8, ">", 18, 20, fg);
+}
+
+static void draw_setup(const Paint *p)
+{
+    const SpRuntime *r = p->runtime;
+    az_rect arc = sp_setup_layout(r->area).card;
+    int x = r->area.x + SP_INSET, w = arc.x - x - 14;
+    az_rect box = {x, arc.y, w, 309};
+    sp_card(p, box);
+    sp_label(p, x + 19, box.y + 14, "Playlist", 23, w - 38, p->text);
+    char summary[115], energy[96];
+    snprintf(summary, sizeof summary, "%u tracks  /  USB %d", r->model.source.identity.total,
+             r->model.stick + 1);
+    sp_label(p, x + 19, box.y + 48, summary, 17, w - 38, p->dim);
+    for (int i = 0; i < 4; ++i)
+        setup_control(p, (az_rect){x + 16, track_start(r) + i * r->row_height,
+                      w - 32, r->row_height - 6}, i);
+    energy_summary(r->energy_choice, energy, sizeof energy);
+    snprintf(summary, sizeof summary, "Energy source: %s", energy);
+    sp_draw_setup_arc(p, summary);
+}
+
 static void draw_footer(const Paint *p)
 {
     const SpRuntime *r = p->runtime;
     const SpModel *model = &r->model;
-    int x = r->area.x + INSET, y = r->area.y + r->area.h - FOOTER;
-    int width = r->area.w - 2 * INSET;
-    rect(p, r->area.x, y, r->area.w, FOOTER, p->head);
+    int x = r->area.x + SP_INSET, y = r->area.y + r->area.h - SP_FOOTER;
+    int width = r->area.w - 2 * SP_INSET;
+    sp_rect(p, r->area.x, y, r->area.w, SP_FOOTER, p->head);
     const char *status = status_text(r);
     if (*status) {
-        label(p, x, y + 8, status, 19, width, p->text);
+        sp_label(p, x, y + 8, status, 19, width, p->text);
         return;
     }
     if (r->page == SP_ORDER) {
         char metrics[200];
-        snprintf(metrics, sizeof metrics, "%u tracks  |  Max jump %.1f BPM  |  %d key warnings  |  %d missing energy  |  %d cached  |  Energy 0-100",
-                 model->source.identity.total, model->planned.max_bpm, model->planned.key_warnings,
-                 model->unknown_energy, model->cache_hits);
-        label(p, x, y + 2, metrics, 17, width, p->text);
+        snprintf(metrics, sizeof metrics, "Max tempo gap %.1f BPM  |  Key clashes %d  |  Missing energy %d  |  %d cached  |  Track energy 0-100",
+                 model->planned.max_bpm, model->planned.key_warnings, model->unknown_energy, model->cache_hits);
+        sp_label(p, x, y + 2, metrics, 17, width, p->text);
         if (model->fallback_energy)
-            label(p, x, y + 23, "* Full-track or waveform-height estimate", 15, width, p->dim);
+            sp_label(p, x, y + 23, "* Full-track or waveform-height estimate", 15, width, p->dim);
     }
 }
 
@@ -531,14 +629,14 @@ static void draw_busy(const Paint *p)
     snprintf(line, sizeof line, "%s", job_title(r->job));
     if (total)
         snprintf(line, sizeof line, "%s   %d / %d", job_title(r->job), progress, total);
-    int x = r->area.x + INSET, y = track_start(r) + INSET, width = r->area.w - 2 * INSET;
-    label(p, x, y, line, 23, width, p->text);
+    int x = r->area.x + SP_INSET, y = track_start(r) + SP_INSET, width = r->area.w - 2 * SP_INSET;
+    sp_label(p, x, y, line, 23, width, p->text);
     if (total) {
-        rect(p, x, y + 43, width, 7, p->head);
-        rect(p, x, y + 43, (int)(width * sp_clamp((double)progress / total, 0, 1)), 7, p->action);
+        sp_rect(p, x, y + 43, width, 7, p->head);
+        sp_rect(p, x, y + 43, (int)(width * sp_clamp((double)progress / total, 0, 1)), 7, p->action);
     }
     const char *cancel = atomic_load(&r->cancel) ? "Cancelling..." : "BACK to cancel";
-    label(p, x, y + 67, cancel, 18, width, p->dim);
+    sp_label(p, x, y + 67, cancel, 18, width, p->dim);
 }
 
 static void reveal_cursor(SpRuntime *r)
@@ -549,24 +647,50 @@ static void reveal_cursor(SpRuntime *r)
         r->top = r->cursor - r->visible + 1;
 }
 
+static void layout_rows(SpRuntime *r, az_rect area)
+{
+    if (r->page == SP_ORDER && sp_dashboard(r)) {
+        az_rect list = sp_review_layout(r).list;
+        r->visible = (list.h - SP_LIST_HEADER - 2) / SP_ROW;
+        return;
+    }
+    r->visible = (int)sp_clamp((area.y + area.h - SP_FOOTER - track_start(r)) / r->row_height, 1, 32);
+}
+
+static void draw_body(const Paint *p)
+{
+    SpRuntime *r = p->runtime;
+    reveal_cursor(r);
+    if (sp_dashboard(r)) {
+        if (r->page == SP_ORDER) {
+            sp_draw_review(p, sp_review_layout(r));
+            return;
+        }
+        if (r->page == SP_SETUP) {
+            draw_setup(p);
+            return;
+        }
+    }
+    if (table_page(r->page))
+        draw_columns(p);
+    draw_rows(p);
+}
+
 static void on_draw(az_draw *draw, az_rect area, void *user)
 {
     SpRuntime *r = user;
     r->area = area;
     r->row_height = (int)sp_clamp(r->core->row_height(draw), 42, 54);
-    r->visible = (int)sp_clamp((area.y + area.h - FOOTER - track_start(r)) / r->row_height, 1, 32);
+    layout_rows(r, area);
     Paint paint = palette(r, draw);
-    rect(&paint, area.x, area.y, area.w, area.h, paint.bg);
+    sp_rect(&paint, area.x, area.y, area.w, area.h, paint.bg);
     bool working = busy(r);
     draw_header(&paint, working);
     if (working) {
         draw_busy(&paint);
         return;
     }
-    reveal_cursor(r);
-    if (table_page(r->page))
-        draw_columns(&paint);
-    draw_rows(&paint);
+    draw_body(&paint);
     draw_footer(&paint);
 }
 
@@ -578,7 +702,7 @@ static int back(SpRuntime *runtime)
     case SP_SETUP:
     case SP_NOTICE: sp_close_planner(runtime); break;
     case SP_ORDER:
-        if (runtime->model.verified)
+        if (save_has_progress(&runtime->model))
             sp_close_planner(runtime);
         else
             open_page(runtime, SP_SETUP);
@@ -629,8 +753,11 @@ static void setup_select(SpRuntime *runtime)
     switch (runtime->cursor) {
     case 0: open_page(runtime, SP_PICK_START); break;
     case 1: open_page(runtime, SP_PICK_END); break;
-    case 2: sp_post_job(runtime, SP_PREVIEW); break;
-    case 3: sp_post_job(runtime, SP_REFRESH); break;
+    case 2:
+    case 3:
+        sp_reset_drag(runtime);
+        sp_post_job(runtime, runtime->cursor == 2 ? SP_PREVIEW : SP_REFRESH);
+        break;
     }
 }
 
@@ -683,6 +810,16 @@ static void open_confirmation(SpRuntime *runtime)
              playlist, runtime->model.stick + 1);
     runtime->confirmation_pending = runtime->core->confirm(SP_ID, "Save playlist order?",
         message, "Save order", confirm_save, runtime) == 0;
+    if (runtime->confirmation_pending)
+        sp_reset_drag(runtime);
+}
+
+static void order_select(SpRuntime *runtime)
+{
+    if (runtime->cursor && sp_dashboard(runtime))
+        runtime->compare = !runtime->compare;
+    else
+        open_confirmation(runtime);
 }
 
 static void select_row(SpRuntime *runtime)
@@ -695,7 +832,7 @@ static void select_row(SpRuntime *runtime)
     case SP_SETUP: setup_select(runtime); break;
     case SP_PICK_START:
     case SP_PICK_END: choose_endpoint(runtime); break;
-    case SP_ORDER: open_confirmation(runtime); break;
+    case SP_ORDER: order_select(runtime); break;
     case SP_ENERGY: choose_energy(runtime); break;
     }
 }
@@ -705,24 +842,50 @@ static void move_cursor(SpRuntime *runtime, int index)
     runtime->cursor = (int)sp_clamp(index, 0, item_count(runtime) > 0 ? item_count(runtime) - 1 : 0);
 }
 
-static void tap_header(SpRuntime *r, int x)
+static void tap_header(SpRuntime *r, int x, int y)
 {
     if (r->planner_open && x < r->area.x + 70) {
         back(r);
         return;
     }
-    if (r->page == SP_ORDER && x >= save_x(r)) {
+    if (r->page != SP_ORDER)
+        return;
+    if (can_edit_curve(r) && sp_contains(edit_button(r), x, y)) {
+        back(r);
+        return;
+    }
+    az_rect save = {save_x(r), r->area.y + 8, r->area.x + r->area.w - SP_INSET - save_x(r), 38};
+    if (sp_contains(save, x, y)) {
         move_cursor(r, 0);
         open_confirmation(r);
     }
 }
 
-static void tap(SpRuntime *r, const az_event *event)
+static bool tap_setup_arc(SpRuntime *r, const az_event *event)
 {
-    if (event->y < r->area.y + HEADER) {
-        tap_header(r, event->x);
+    SpSetupLayout layout = sp_setup_layout(r->area);
+    int x = event->x, y = event->y;
+    if (!sp_contains(layout.card, x, y))
+        return false;
+    if (sp_contains(layout.preset, x, y)) {
+        sp_reset_drag(r);
+        r->options.curve = (r->options.curve + 1) % SP_CURVES;
+        r->options.custom_arc = (SpArc){0};
+    } else if (r->options.custom_arc.count && sp_contains(layout.reset, x, y)) {
+        sp_reset_drag(r);
+        r->options.custom_arc = (SpArc){0};
+    }
+    return true;
+}
+
+static void tap_content(SpRuntime *r, const az_event *event)
+{
+    if (r->page == SP_ORDER && sp_dashboard(r)) {
+        sp_tap_review(r, event);
         return;
     }
+    if (r->page == SP_SETUP && sp_dashboard(r) && tap_setup_arc(r, event))
+        return;
     int y = event->y - track_start(r);
     if (y < 0 || y >= r->visible * r->row_height)
         return;
@@ -733,24 +896,43 @@ static void tap(SpRuntime *r, const az_event *event)
     }
 }
 
+static void tap(SpRuntime *r, const az_event *event)
+{
+    if (event->y < r->area.y + SP_HEADER) {
+        tap_header(r, event->x, event->y);
+        return;
+    }
+    tap_content(r, event);
+}
+
+static int idle_input(SpRuntime *runtime, const az_event *event)
+{
+    if (sp_dashboard(runtime)) {
+        sp_poll_drag(runtime);
+        if (sp_surface_drag(runtime, event))
+            return 1;
+    }
+    switch (event->kind) {
+    case AZ_EV_BACK: return back(runtime);
+    case AZ_EV_KNOB:
+        move_cursor(runtime, runtime->cursor + event->dir);
+        sp_chart_follow(runtime);
+        runtime->compare = false;
+        return 1;
+    case AZ_EV_CLICK: select_row(runtime); return 1;
+    case AZ_EV_TAP: tap(runtime, event); return 1;
+    default: return 0;
+    }
+}
+
 static int on_input(const az_event *event, void *user)
 {
     SpRuntime *runtime = user;
     if (busy(runtime)) {
         if (event->kind == AZ_EV_BACK)
             atomic_store(&runtime->cancel, true);
-    } else {
-        switch (event->kind) {
-        case AZ_EV_BACK:
-            if (!back(runtime))
-                return 0;
-            break;
-        case AZ_EV_KNOB: move_cursor(runtime, runtime->cursor + event->dir); break;
-        case AZ_EV_CLICK: select_row(runtime); break;
-        case AZ_EV_TAP: tap(runtime, event); break;
-        default: return 0;
-        }
-    }
+    } else if (!idle_input(runtime, event))
+        return 0;
     sp_redraw(runtime);
     return 1;
 }
@@ -764,7 +946,10 @@ static void completed(SpRuntime *runtime)
     switch (runtime->job) {
     case SP_LOAD: open_page(runtime, SP_SETUP); break;
     case SP_PREVIEW:
-    case SP_REFRESH: open_page(runtime, SP_ORDER); break;
+    case SP_REFRESH:
+        open_page(runtime, SP_ORDER);
+        runtime->cursor = runtime->model.source.identity.total > 1 ? 2 : 1;
+        break;
     default: break;
     }
 }
@@ -782,7 +967,8 @@ void sp_ui_tick(SpRuntime *runtime)
             runtime->progress_seen = progress;
             sp_redraw(runtime);
         }
-    }
+    } else if (sp_poll_drag(runtime))
+        sp_redraw(runtime);
 }
 
 const az_screen_v1 sp_screen = {.size = sizeof sp_screen, .on_draw = on_draw,

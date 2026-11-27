@@ -3,21 +3,53 @@
 #include "http_modern.h"
 #include "cmcp.h"
 
-#include <openssl/asn1.h>
 #include <stdlib.h>
 #include <string.h>
 
-/* OpenSSL decodes each code point. This also lets us trim a copied SDK
- * string at a valid boundary when the fixed-size snapshot cuts a character. */
+static size_t utf8_length(unsigned char lead)
+{
+    if (lead < 0x80)
+        return 1;
+    if (lead < 0xc2)
+        return 0;
+    if (lead < 0xe0)
+        return 2;
+    if (lead < 0xf0)
+        return 3;
+    return lead <= 0xf4 ? 4 : 0;
+}
+
+static bool utf8_second(unsigned char lead, unsigned char second)
+{
+    switch (lead) {
+    case 0xe0: return second >= 0xa0;
+    case 0xed: return second <= 0x9f;
+    case 0xf0: return second >= 0x90;
+    case 0xf4: return second <= 0x8f;
+    default: return true;
+    }
+}
+
+static size_t utf8_width(const unsigned char *text, size_t available)
+{
+    size_t width = utf8_length(text[0]);
+    if (!width || width > available)
+        return 0;
+    for (size_t i = 1; i < width; ++i) {
+        if ((text[i] & 0xc0) != 0x80)
+            return 0;
+    }
+    return width == 1 || utf8_second(text[0], text[1]) ? width : 0;
+}
+
 size_t mcp_utf8_prefix(const char *text, size_t length)
 {
     size_t offset = 0;
     while (offset < length) {
-        unsigned long codepoint;
-        int bytes = UTF8_getc((const unsigned char *)text + offset, (int)(length - offset), &codepoint);
-        if (bytes <= 0 || codepoint > 0x10ffff || (codepoint >= 0xd800 && codepoint <= 0xdfff))
+        size_t bytes = utf8_width((const unsigned char *)text + offset, length - offset);
+        if (!bytes)
             break;
-        offset += (size_t)bytes;
+        offset += bytes;
     }
     return offset;
 }

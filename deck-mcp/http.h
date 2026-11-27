@@ -6,7 +6,6 @@
 #include "provider/wire.h"
 
 #include <event2/http.h>
-#include <openssl/ssl.h>
 
 #define MCP_PROVIDER_LIMIT 4
 #define MCP_PATH_SIZE 512
@@ -30,6 +29,7 @@ struct mcp_config {
     struct mcp_provider_policy providers[MCP_PROVIDER_LIMIT];
     size_t provider_count;
 };
+struct mcp_tls;
 bool mcp_load_config(const char *directory, struct mcp_config *config);
 bool mcp_prepare_config(const char *directory, struct mcp_config *config);
 bool mcp_lan_address(char address[16]);
@@ -37,12 +37,7 @@ bool mcp_file_missing(const char *directory, const char *name);
 bool mcp_save_file(const char *directory, const char *name, const char *text, size_t length, bool replace);
 bool mcp_generate_secret(char out[MCP_SECRET_SIZE]);
 bool mcp_replace_token(const char *directory, const char token[MCP_SECRET_SIZE]);
-SSL_CTX *mcp_tls_context(void);
-BIO *mcp_open_pem(const char *directory, const char *name);
-EVP_PKEY *mcp_read_key(BIO *bio);
-SSL_CTX *mcp_load_tls(const char *directory);
-SSL_CTX *mcp_setup_tls(const char *directory, const char *address);
-void mcp_pair_init(struct mcp_pairing *pair, SSL_CTX *tls, const char *directory, bool generated);
+void mcp_pair_init(struct mcp_pairing *pair, struct mcp_tls *tls, const char *directory, bool generated);
 void mcp_pair_close(struct mcp_pairing *pair);
 void mcp_pair_cancel(struct mcp_pairing *pair, struct mcp_runtime *runtime);
 void mcp_pair_poll(struct mcp_pairing *pair, struct mcp_runtime *runtime,

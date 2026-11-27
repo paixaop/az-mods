@@ -25,7 +25,7 @@ struct mcp_job {
     struct mcp_intent intent;
     unsigned grant, state;
     bool settled, cancel_requested;
-    uint64_t revision, observed_ns, deadline_ns;
+    uint64_t revision, observed_ns, deadline_ns, collect_until;
     int reason;
 };
 
@@ -40,16 +40,18 @@ struct mcp_active_job {
 struct mcp_commands {
     const az_commands_v1 *api;
     atomic_uint grant;
+    atomic_uint_fast64_t arm_deadline;
     unsigned generation;
-    uint64_t next_request, arm_deadline;
+    uint64_t next_request;
     size_t count;
+    bool replacement_open;
     struct mcp_job jobs[MCP_JOBS];
     struct mcp_active_job active;
 };
 
 struct mcp_runtime;
 void mcp_commands_init(struct mcp_runtime *runtime);
-void mcp_commands_tick(struct mcp_runtime *runtime);
+void mcp_commands_tick(struct mcp_runtime *runtime, uint64_t now);
 void mcp_commands_disarm(void *user);
 void mcp_commands_arm(struct mcp_runtime *runtime);
 int mcp_queue(struct mcp_runtime *runtime, const struct mcp_intent *intent, unsigned grant,

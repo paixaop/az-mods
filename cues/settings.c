@@ -37,11 +37,7 @@ enum { H_TAB,
        H_CHOICE,
        H_SAVE_RULE,
        H_PAGE,
-       H_BACK,
-       H_KEY,
-       H_KEY_PAGE,
-       H_KEY_SAVE,
-       H_KEY_CANCEL };
+       H_BACK };
 enum { TAB_GROUPS, TAB_CONFIG, TAB_FILES, TAB_HELP, TAB_COUNT };
 static const struct { const char *label; int view; } tabs[TAB_COUNT] = {
     [TAB_GROUPS] = { "Groups", GROUPS }, [TAB_CONFIG] = { "Config", GLOBAL },
@@ -133,9 +129,8 @@ typedef struct {
 } sentence_token;
 static sentence_token sentence[32];
 static int sentence_count;
-static int keyboard, numeric, key_page, key_return_page;
-static char key_label[64], key_buffer[128], key_error[128];
-static field key_field;
+static int editing_field;
+static field entry_field;
 static const char *const onoff[] = { "Off", "On" };
 static const char *const qnames[] = { "Inherit", "Off", "Beat", "Bar" };
 static const char *const unit_names[] = { "Bars", "Beats", "Seconds" };
@@ -144,9 +139,6 @@ static const char *const cue_names[] = { "Hot cue", "Memory cue" };
 static const char *const points[] = { "start", "middle", "end" };
 static const char *const loop_options[] = { "bars", "beats", "seconds", "from phrase start", "to phrase end" };
 static const char *const pads[] = { "A", "B", "C", "D", "E", "F", "G", "H" };
-static const char characters[] =
-    "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789 {}:._-/+()#&'?!,=@";
-static const char digits[] = "0123456789.-";
 static void redraw(void)
 {
     hit_count = 0;
@@ -504,24 +496,6 @@ static int parent_view(void)
     if (view == DELETE_GROUP) return GROUP;
     return GROUPS;
 }
-static void open_keyboard(field f)
-{
-    keyboard = 1;
-    focus = 0;
-    key_field = f;
-    numeric = f.kind != F_TEXT;
-    key_page = 0;
-    key_error[0] = 0;
-    key_return_page = page;
-    snprintf(key_label, sizeof key_label, "%s", f.label);
-    if (f.kind == F_TEXT)
-        snprintf(key_buffer, sizeof key_buffer, "%s", (char *)f.value);
-    else if (f.kind == F_INT)
-        snprintf(key_buffer, sizeof key_buffer, "%d", *(int *)f.value);
-    else
-        snprintf(key_buffer, sizeof key_buffer, "%.9g", *(double *)f.value);
-    redraw();
-}
 static void request_save(void)
 {
     int rc = cues_store_request(&active_config, active_revision);
@@ -710,6 +684,7 @@ static void select_rule_choice(int value)
     rule_choice = -1;
     focus = 0;
 }
+static void open_field_entry(field f);
 static void change_field(int index)
 {
     if (index < 0 || index >= field_count)
@@ -720,7 +695,7 @@ static void change_field(int index)
         return;
     }
     if (!f.choices) {
-        open_keyboard(f);
+        open_field_entry(f);
         return;
     }
     if (view == RULE) {
@@ -732,113 +707,113 @@ static void change_field(int index)
     modified();
     redraw();
 }
-static int commit_keyboard_integer(double v)
+static int commit_integer(double value)
 {
-    if (v < key_field.min || v > key_field.max || floor(v) != v) {
+    if (value < entry_field.min || value > entry_field.max || floor(value) != value) {
         snprintf(storage_status, sizeof storage_status, "Enter an integer from %d to %d",
-                 key_field.min, key_field.max);
+                 entry_field.min, entry_field.max);
         return 0;
     }
-    *(int *)key_field.value = (int)v;
-    return 1;
-}
-static int commit_keyboard_number(void)
-{
-    char *end;
-    double v = strtod(key_buffer, &end);
-    if (!key_buffer[0] || *end || !isfinite(v)) {
-        snprintf(storage_status, sizeof storage_status, "Enter a valid number");
-        return 0;
-    }
-    if (key_field.kind == F_INT) {
-        return commit_keyboard_integer(v);
-    } else {
-        if (v < key_field.low || v > key_field.high) {
-            snprintf(storage_status, sizeof storage_status, "Enter a value from %.9g to %.9g",
-                     key_field.low, key_field.high);
-            return 0;
-        }
-        *(double *)key_field.value = v;
-    }
-    return 1;
-}
-static int commit_keyboard_value(void)
-{
-    if (key_field.kind == F_TEXT) {
-        if (strlen(key_buffer) >= key_field.capacity)
-            return 0;
-        snprintf(key_field.value, key_field.capacity, "%s", key_buffer);
-    } else {
-        return commit_keyboard_number();
-    }
+    *(int *)entry_field.value = (int)value;
     return 1;
 }
 
-static int commit_config_keyboard(void)
+static int commit_decimal(double value)
+{
+    if (value < entry_field.low || value > entry_field.high) {
+        snprintf(storage_status, sizeof storage_status, "Enter a number from %.9g to %.9g",
+                 entry_field.low, entry_field.high);
+        return 0;
+    }
+    *(double *)entry_field.value = value;
+    return 1;
+}
+
+static int commit_number(const char *text)
+{
+    char *end;
+    double value = strtod(text, &end);
+    if (end == text || *end || !isfinite(value)) {
+        snprintf(storage_status, sizeof storage_status, "Enter a valid number");
+        return 0;
+    }
+    return entry_field.kind == F_INT ? commit_integer(value) : commit_decimal(value);
+}
+
+static int commit_entry(const char *text)
+{
+    if (entry_field.kind != F_TEXT)
+        return commit_number(text);
+    if (strlen(text) >= entry_field.capacity)
+        return 0;
+    snprintf(entry_field.value, entry_field.capacity, "%s", text);
+    return 1;
+}
+
+static int commit_config_entry(const char *text)
 {
     cues_config previous = config;
-    if (!commit_keyboard_value()) return 0;
-    char error[128];
-    if (!cues_config_validate(&config, error, sizeof error)) {
+    if (!commit_entry(text))
+        return 0;
+    if (!cues_config_validate(&config, storage_status, sizeof storage_status)) {
         config = previous;
-        snprintf(storage_status, sizeof storage_status, "%s", error);
         return 0;
     }
     modified();
     return 1;
 }
-static int commit_keyboard(void)
+
+static const char *field_entry_result(int status, const char *text, void *user)
 {
-    int okay = view == RULE ? commit_keyboard_value() : commit_config_keyboard();
-    if (okay) {
-        keyboard = 0;
-        page = key_return_page;
+    (void)user;
+    if (!editing_field)
+        return NULL;
+    if (status == AZ_OK) {
+        storage_status[0] = 0;
+        int accepted = view == RULE ? commit_entry(text) : commit_config_entry(text);
+        if (!accepted)
+            return storage_status[0] ? storage_status : "Value is too long";
     }
-    return okay;
-}
-static void key_caption(char text[8], int i, const char *chars)
-{
-    int arg = i - 2;
-    if (i == 0)
-        snprintf(text, 8, "Del");
-    else if (i == 1)
-        snprintf(text, 8, "SP");
-    else
-        snprintf(text, 8, "%c", chars[arg]);
+    if (status == AZ_FAILED)
+        snprintf(storage_status, sizeof storage_status, "Could not open the deck keyboard");
+    editing_field = 0;
+    redraw();
+    return NULL;
 }
 
-static void draw_keyboard(az_draw *d, az_rect a)
+static void initial_number(char *text, size_t capacity, const field *f)
 {
-    label(d, (az_rect){ a.x + 8, a.y + 3, a.w - 16, 24 }, key_error[0] ? key_error : key_label, 14,
-          color(AZ_COL_TEXT_DIM));
-    label(d, (az_rect){ a.x + 8, a.y + 29, a.w - 16, 30 }, key_buffer[0] ? key_buffer : "(empty)", 16,
-          color(AZ_COL_TEXT));
-    int cols = (a.w - 16) / 48;
-    if (cols < 1)
-        cols = 1;
-    int rows = (a.h - 116) / 48;
-    if (rows < 1)
-        rows = 1;
-    int per = rows * cols;
-    const char *chars = numeric ? digits : characters;
-    int count = (int)strlen(chars) + 2;
-    int pages = (count + per - 1) / per;
-    if (key_page >= pages)
-        key_page = 0;
-    int first = key_page * per;
-    for (int i = first; i < count && i < first + per; i++) {
-        char text[8];
-        int arg = i - 2;
-        key_caption(text, i, chars);
-        int cell = i - first;
-        button(d, (az_rect){ a.x + 8 + (cell % cols) * 48, a.y + 64 + (cell / cols) * 48, 44, 44 },
-               text, H_KEY, arg, 0);
+    if (f->kind == F_INT)
+        snprintf(text, capacity, "%d", *(int *)f->value);
+    else
+        snprintf(text, capacity, "%.9g", *(double *)f->value);
+}
+
+static void open_field_entry(field f)
+{
+    if (!AZ_HAS(C, text_entry)) {
+        snprintf(storage_status, sizeof storage_status, "Deck keyboard is unavailable");
+        return;
     }
-    int bw = (a.w - 28) / 4, y = a.y + a.h - 48;
-    button(d, (az_rect){ a.x + 8, y, bw, 44 }, "Cancel", H_KEY_CANCEL, 0, 0);
-    button(d, (az_rect){ a.x + 12 + bw, y, bw, 44 }, "<", H_KEY_PAGE, -1, 0);
-    button(d, (az_rect){ a.x + 16 + 2 * bw, y, bw, 44 }, ">", H_KEY_PAGE, 1, 0);
-    button(d, (az_rect){ a.x + 20 + 3 * bw, y, bw, 44 }, "Save", H_KEY_SAVE, 0, 1);
+    char number[64];
+    if (f.kind != F_TEXT)
+        initial_number(number, sizeof number, &f);
+    const az_text_entry_v1 entry = {
+        .size = sizeof entry,
+        .max_bytes = f.kind == F_TEXT ? (uint32_t)(f.capacity - 1) : sizeof number - 1,
+        .title = f.label,
+        .initial = f.kind == F_TEXT ? f.value : number,
+        .submit = "Save",
+        .on_result = field_entry_result,
+    };
+    int status = C->text_entry(CUES_ID, &entry);
+    if (status != AZ_OK) {
+        snprintf(storage_status, sizeof storage_status, "%s", status == AZ_BUSY
+                 ? "Another dialog is open" : "Deck keyboard is unavailable");
+        return;
+    }
+    entry_field = f;
+    editing_field = 1;
 }
 static void field_value(const field *f, char *value, size_t capacity)
 {
@@ -1454,14 +1429,10 @@ static void draw(az_draw *d, az_rect a, void *unused)
     if (!C || a.w < 240 || a.h < 180)
         return;
     C->fill_rect(d, a.x, a.y, a.w, a.h, color(AZ_COL_BG));
-    if (keyboard) {
-        draw_keyboard(d, a);
-    } else {
-        rebuild();
-        int content = a.w - 24;
-        if (content > 1120) content = 1120;
-        draw_page(d, a, (az_rect){ a.x + (a.w - content) / 2, a.y, content, a.h });
-    }
+    rebuild();
+    int content = a.w - 24;
+    if (content > 1120) content = 1120;
+    draw_page(d, a, (az_rect){ a.x + (a.w - content) / 2, a.y, content, a.h });
     if (focus >= hit_count)
         focus = 0;
 }
@@ -1493,56 +1464,10 @@ static void move_page(int direction)
     else
         page = (page + direction + pages) % pages;
 }
-static void edit_key(int key)
-{
-    if (key == -2) {
-        size_t n = strlen(key_buffer);
-        if (n) {
-            do {
-                n--;
-            } while (n && ((unsigned char)key_buffer[n] & 0xc0) == 0x80);
-            key_buffer[n] = 0;
-        }
-    } else {
-        size_t n = strlen(key_buffer), limit = numeric ? sizeof key_buffer : key_field.capacity;
-        if (n + 1 < limit) {
-            key_buffer[n] = key == -1 ? ' ' : (numeric ? digits : characters)[key];
-            key_buffer[n + 1] = 0;
-        }
-    }
-}
-static void move_key_page(int direction)
-{
-    int cols = (area.w - 16) / 48, rows = (area.h - 116) / 48;
-    if (rows < 1)
-        rows = 1;
-    int per = cols * rows, count = (int)strlen(numeric ? digits : characters) + 2,
-        pages = (count + per - 1) / per;
-    key_page = (key_page + direction + pages) % pages;
-}
-static void activate_key(hit h)
-{
-    switch (h.kind) {
-    case H_KEY: edit_key(h.arg); break;
-    case H_KEY_PAGE: move_key_page(h.arg); break;
-    case H_KEY_SAVE:
-        if (!commit_keyboard())
-            snprintf(key_error, sizeof key_error, "%s", storage_status);
-        break;
-    case H_KEY_CANCEL:
-        keyboard = 0;
-        break;
-    }
-}
 static int input_back(void)
 {
     if (help_open) {
         close_help();
-        return 1;
-    }
-    if (keyboard) {
-        keyboard = 0;
-        redraw();
         return 1;
     }
     if (rule_choice >= 0) {
@@ -1555,14 +1480,6 @@ static int input_back(void)
         return 0;
     go(parent_view());
     return 1;
-}
-static int activate_rule_hit(hit h)
-{
-    switch (h.kind) {
-    case H_CHOICE: select_rule_choice(h.arg); return 1;
-    case H_SAVE_RULE: save_rule(); return 1;
-    default: return 0;
-    }
 }
 static int activate_hit(hit h)
 {
@@ -1578,9 +1495,9 @@ static int activate_hit(hit h)
         break;
     case H_PAGE: move_page(h.arg); break;
     case H_BACK: return input_back();
-    default:
-        if (!activate_rule_hit(h)) activate_key(h);
-        break;
+    case H_CHOICE: select_rule_choice(h.arg); break;
+    case H_SAVE_RULE: save_rule(); break;
+    default: break;
     }
     return 1;
 }
@@ -1613,7 +1530,7 @@ static int input(const az_event *e, void *unused)
 static void enter(void *unused)
 {
     (void)unused;
-    keyboard = help_open = 0;
+    editing_field = help_open = 0;
     rule_choice = -1;
     view = GROUPS;
     page = focus = hit_count = 0;
@@ -1636,6 +1553,11 @@ const az_screen_v1 *cues_settings_init(const az_core_v1 *core, void (*changed)(v
     enter(NULL);
     return &screen;
 }
+void cues_settings_start_storage(void)
+{
+    if (storage_ok)
+        storage_ok = cues_store_start(storage_status, sizeof storage_status);
+}
 const cues_config *cues_settings_config(void)
 {
     return &active_config;
@@ -1652,7 +1574,7 @@ int cues_settings_remote_apply(const cues_config *validated, unsigned expected)
 {
     if (expected != active_revision)
         return AZ_STALE;
-    if (draft_pending || keyboard || view == RULE || view == DELETE_RULE || view == DELETE_GROUP)
+    if (draft_pending || editing_field || view == RULE || view == DELETE_RULE || view == DELETE_GROUP)
         return AZ_BUSY;
     config = *validated;
     commit_config(&config);

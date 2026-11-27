@@ -19,6 +19,9 @@ const az_screen_v1 *cues_settings_init(const az_core_v1 *core, void (*changed)(v
     (void)changed;
     return NULL;
 }
+void cues_settings_start_storage(void)
+{
+}
 const cues_config *cues_settings_config(void)
 {
     return &preview_config;

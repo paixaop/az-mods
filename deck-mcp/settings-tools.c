@@ -5,11 +5,6 @@
 #include <stdio.h>
 #include <string.h>
 
-static bool saved_grant(const struct mcp_runtime *runtime)
-{
-    return az_mcp_before(az_mcp_clock(), atomic_load(&runtime->saved_edits));
-}
-
 static void observe_settings(struct mcp_runtime *runtime)
 {
     struct mcp_settings *settings = &runtime->settings;
@@ -24,22 +19,25 @@ static void observe_settings(struct mcp_runtime *runtime)
     }
 }
 
-static int setting_apply(struct mcp_runtime *runtime, const struct mcp_setting_change *job)
+static int setting_apply(struct mcp_runtime *runtime, const struct mcp_setting_change *job,
+                          uint64_t now)
 {
-    if (!saved_grant(runtime))
+    if (job->generation != mcp_saved_grant_generation(runtime, now))
         return AZ_CANCELLED;
-    if (!az_mcp_before(az_mcp_clock(), job->deadline))
+    if (!az_mcp_before(now, job->deadline))
         return AZ_STALE;
     return runtime->core->official_setting_write(MCP_ID, job->setting, job->expected, job->value);
 }
 
-static bool run_write(struct mcp_runtime *runtime)
+static bool run_write(struct mcp_runtime *runtime, uint64_t now)
 {
     struct mcp_settings *settings = &runtime->settings;
     for (size_t i = 0; i < settings->used; ++i) {
         struct mcp_setting_change *change = &settings->writes[i];
         if (change->status == AZ_PENDING) {
-            change->status = setting_apply(runtime, change);
+            change->status = setting_apply(runtime, change, now);
+            if (change->status != AZ_PENDING)
+                change->collect_until = mcp_receipt_deadline(now);
             return true;
         }
     }
@@ -52,7 +50,7 @@ void mcp_settings_tick(struct mcp_runtime *runtime)
         return;
     uint64_t now = az_mcp_clock();
     struct mcp_settings *settings = &runtime->settings;
-    if (run_write(runtime) || !az_mcp_before(now, settings->next_read)) {
+    if (run_write(runtime, now) || !az_mcp_before(now, settings->next_read)) {
         observe_settings(runtime);
         settings->next_read = now + AZ_MCP_NS / 5;
     }
@@ -122,6 +120,15 @@ static bool same_change(const struct mcp_setting_change *a, const struct mcp_set
     return !strcmp(a->setting, b->setting) && a->expected == b->expected && a->value == b->value;
 }
 
+void mcp_settings_reap(struct mcp_settings *settings, uint64_t now)
+{
+    size_t kept = 0;
+    for (size_t i = 0; i < settings->used; ++i)
+        if (!mcp_receipt_expired(now, settings->writes[i].collect_until))
+            settings->writes[kept++] = settings->writes[i];
+    settings->used = kept;
+}
+
 static struct mcp_setting_change *find_change(struct mcp_settings *settings, const char *key)
 {
     for (size_t i = 0; i < settings->used; ++i)
@@ -130,7 +137,8 @@ static struct mcp_setting_change *find_change(struct mcp_settings *settings, con
     return NULL;
 }
 
-static int queue_setting(struct mcp_runtime *runtime, struct mcp_setting_change *change)
+static int queue_setting(struct mcp_runtime *runtime, struct mcp_setting_change *change,
+                          uint64_t now)
 {
     struct mcp_settings *settings = &runtime->settings;
     struct mcp_setting_change *prior = find_change(settings, change->key);
@@ -140,14 +148,15 @@ static int queue_setting(struct mcp_runtime *runtime, struct mcp_setting_change 
         *change = *prior;
         return AZ_OK;
     }
-    if (!saved_grant(runtime))
+    change->generation = mcp_saved_grant_generation(runtime, now);
+    if (!change->generation)
         return AZ_CANCELLED;
     if (!AZ_HAS(runtime->core, official_setting_write))
         return AZ_UNSUPPORTED;
     if (settings->used == MCP_SETTING_WRITES)
         return AZ_LIMIT;
     change->status = AZ_PENDING;
-    change->deadline = az_mcp_clock() + AZ_MCP_CALL_NS;
+    change->deadline = now + AZ_MCP_CALL_NS;
     settings->writes[settings->used++] = *change;
     return AZ_OK;
 }
@@ -159,10 +168,12 @@ static int setting_command(struct mcp_runtime *runtime, const cmcp_json_t *args,
     const char *key = az_mcp_string(args, "key");
     if (!session || strcmp(session, runtime->session) || !valid_text(key, sizeof change->key))
         return AZ_INVALID;
+    uint64_t now = az_mcp_clock();
+    mcp_settings_reap(&runtime->settings, now);
     if (!strcmp(action, "write")) {
         if (!parse_change(args, change))
             return AZ_INVALID;
-        return queue_setting(runtime, change);
+        return queue_setting(runtime, change, now);
     }
     struct mcp_setting_change *prior = find_change(&runtime->settings, key);
     if (!prior)
