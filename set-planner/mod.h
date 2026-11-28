@@ -13,7 +13,7 @@
 
 enum SpJob { SP_NO_JOB, SP_LOAD, SP_PREVIEW, SP_REFRESH, SP_APPLY };
 enum SpPhase { SP_IDLE, SP_WORKING, SP_DONE };
-enum SpPage { SP_SETTINGS, SP_SETUP, SP_PICK_START, SP_PICK_END, SP_ORDER, SP_ENERGY, SP_NOTICE };
+enum SpPage { SP_SETTINGS, SP_SETUP, SP_TRACKS, SP_ORDER, SP_ENERGY, SP_NOTICE };
 enum SpEnergy { SP_MISSING, SP_FULL, SP_PHRASE, SP_PHRASES, SP_ENERGY_COUNT };
 enum SpOccurrence { SP_FIRST, SP_MIDDLE, SP_LAST, SP_OCCURRENCE_COUNT };
 
@@ -51,6 +51,13 @@ typedef struct {
 } SpTimeline;
 
 typedef struct {
+    SpLink *links;
+    int *order, *scratch, *draft, *picked;
+    int count, sequence_count, draft_count, editing;
+    bool drafting;
+} SpTrackSetup;
+
+typedef struct {
     int stick, playlist;
     char playlist_name[192];
     SpOrder source;
@@ -64,6 +71,7 @@ typedef struct {
     bool can_resume;
     SpMetrics original, planned;
     SpTimeline timeline;
+    SpTrackSetup setup;
 } SpModel;
 
 typedef struct {
@@ -88,6 +96,7 @@ typedef struct {
     int visible, row_height;
     bool compare;
     bool chart_detail;
+    const char *track_hint;
     int chart_first;
     az_rect arc_plot;
     az_rect chart_rail;
@@ -108,6 +117,14 @@ void sp_clear_order(SpOrder *order);
 void sp_discard_plan(SpModel *model);
 void sp_discard_selection(SpModel *model);
 void sp_release_model(SpModel *model);
+bool sp_init_track_setup(SpTrackSetup *setup, int count);
+void sp_clear_track_setup(SpTrackSetup *setup);
+void sp_start_sequence(SpTrackSetup *setup, int entry);
+void sp_cancel_sequence(SpTrackSetup *setup);
+bool sp_toggle_sequence_track(SpTrackSetup *setup, int entry);
+const char *sp_lock_sequence(SpTrackSetup *setup, const SpOptions *options);
+void sp_unlock_sequence(SpTrackSetup *setup, int entry);
+bool sp_set_endpoint(SpTrackSetup *setup, SpOptions *options, int entry, bool opening);
 int sp_load_target(SpRuntime *runtime);
 int sp_read_order(SpRuntime *runtime, SpOrder *out);
 int sp_read_selection(SpRuntime *runtime);

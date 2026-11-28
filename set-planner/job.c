@@ -44,6 +44,7 @@ void sp_discard_selection(SpModel *model)
 {
     sp_discard_plan(model);
     sp_clear_order(&model->source);
+    sp_clear_track_setup(&model->setup);
     free(model->tracks);
     free(model->inputs);
     model->tracks = NULL;
@@ -94,6 +95,15 @@ static int score_playlist(SpRuntime *runtime)
     return sp_order_check(runtime);
 }
 
+static bool compute_order(SpRuntime *runtime, int count)
+{
+    SpModel *model = &runtime->model;
+    SpOptions options = runtime->options;
+    if (model->setup.sequence_count)
+        options.links = model->setup.links;
+    return sp_plan_order(model->tracks, count, &options, model->target);
+}
+
 static int plan_playlist(SpRuntime *runtime)
 {
     SpModel *model = &runtime->model;
@@ -104,7 +114,7 @@ static int plan_playlist(SpRuntime *runtime)
         return AZ_FAILED;
     if (!sp_normalize_energy(model->tracks, count))
         return AZ_FAILED;
-    if (!sp_plan_order(model->tracks, count, &runtime->options, model->target))
+    if (!compute_order(runtime, count))
         return AZ_FAILED;
     model->move_count = sp_plan_moves(model->target, count, model->moves, &runtime->options);
     if (model->move_count < 0)

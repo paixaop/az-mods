@@ -1,6 +1,6 @@
 # SPDX-License-Identifier: GPL-3.0-only
 MOD_ID := set-planner
-SRCS := mod.c menu.c review.c dashboard.c chart.c arc-edit.c library.c energy.c cache.c job.c planner.c
+SRCS := mod.c menu.c track-setup-ui.c track-setup.c review.c dashboard.c chart.c arc-edit.c library.c energy.c cache.c job.c planner.c
 AZ_SDK ?= ../../az-mods-sdk
 AZ_SDK_INCLUDE ?= $(AZ_SDK)/include
 OUT ?= out

@@ -2,7 +2,19 @@
 
 Set Planner orders a rekordbox USB playlist using harmonic key, effective BPM, and energy from saved analysis. It ports the FletDJ ordering approach, including tempo and energy clustering, transition scoring, and seeded optimization. The deck SDK exposes key, BPM, and duration for this calculation. Genre is unavailable in the playlist metadata.
 
-Highlight a USB playlist in the deck browser or open its track list. Press the deck’s **MENU** button and tap **Plan Set** in the button row. If the row is full, open **Edit** to find **Plan Set**. Optionally select an opener or closer by playlist position. Leaving either on **Automatic** lets the planner choose that endpoint. Repeated tracks remain distinct playlist entries. **BACK** returns to the browser.
+## Plan a set
+
+Highlight a USB playlist in the deck browser or open its track list. Press the deck’s **MENU** button and tap **Plan Set** in the button row. If the row is full, open **Edit** to find **Plan Set**. **BACK** returns to the browser.
+
+![Plan set screen showing Track setup, Preview set, the selected opener and closer, and the Primetime energy curve](docs/plan-set.png)
+
+Open **Track setup** to work from the current playlist order before running the planner. Select a track, tap **Start sequence**, then tap more tracks in playback order. Use the browser knob or tap the scrollbar to reach tracks anywhere in the list. Tap **Lock sequence** to place them together in the working list. You can create multiple sequences. Select a grouped track to edit or unlock its sequence. Repeated tracks remain distinct playlist entries.
+
+The teal bracket marks a locked sequence. The **Pick** numbers and the bar above **Lock sequence** show the playback order for the sequence you’re building.
+
+![Track setup showing a locked two-track opener and three more tracks selected in playback order](docs/track-setup.png)
+
+Use **Set as opener** or **Set as closer** to pin a track or its entire sequence at that end of the set. Clear a pin to let the planner choose that endpoint. Tap **Done**, then **Preview set**. The optimizer moves each locked sequence as a unit and scores each track at its planned position. Locks and pins carry over when you rerun the preview in the same planning session. **Save order** writes the reviewed order to the USB playlist.
 
 In **Plan set**, tap **Curve** to cycle through presets. Drag the dots to change energy. Interior dots can also move earlier or later in the set. Drag either end dot up or down to set the opening or closing energy. **Reset to preset** discards your edits. The custom curve applies to this planning session. After reviewing an order, tap **Edit curve** and then **Preview set** to run the planner with your changes.
 
@@ -20,7 +32,13 @@ Adjacent phrases of the same type merge when they share a beat boundary. Separat
 
 The preview shows the track's waveform score rounded to a whole number on a fixed 0–100 scale. The same analysis selection on a track has the same displayed energy across playlists. An asterisk marks a full-track or waveform-height fallback, and a dash means no usable measurement. The planner uses a separate playlist-relative scale for fitting the set's energy curve, with a neutral value for tracks that lack a waveform score.
 
+## Review and save the order
+
 The **Set overview** plots the planned energy in teal against the dashed target, with BPM and Camelot keys below it. Energy here uses the same 1–10 scale as the planner. Gaps indicate missing measurements. When **Use track duration** is enabled, the horizontal axis shows the cumulative track durations available in the library. Otherwise it shows running order.
+
+In this example, both locked sequences are still bracketed in **Running order**. Selecting the second track shows its transition from the opener. **Save order** is at the top right.
+
+![Set preview showing the energy chart, the selected transition, both locked sequences, and the Save order button](docs/set-preview.png)
 
 For playlists over 60 tracks, the overview groups tracks by position along the set and plots average energy and BPM for each section. The shaded band spans the lowest and highest measured energy in the section. Orange and red bars show the share of transitions with tempo jumps and key clashes.
 

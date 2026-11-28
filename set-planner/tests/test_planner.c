@@ -715,6 +715,121 @@ static void test_algorithm(void)
     assert(sp_plan_order(tracks, 1, &options, planned) && planned[0] == 0);
 }
 
+static void assert_sequence(const int *order, int count, const int *sequence, int length)
+{
+    for (int i = 0; i <= count - length; ++i)
+        if (memcmp(order + i, sequence, (size_t)length * sizeof *order) == 0)
+            return;
+    assert(!"Locked sequence missing from order");
+}
+
+static bool cancel_plan(void *user)
+{
+    (void)user;
+    return true;
+}
+
+static void test_sequence_optimizer(void)
+{
+    SpTrack tracks[] = {{.bpm = 130}, {.bpm = 100}, {.bpm = 130}, {.bpm = 100}};
+    SpLink links[] = {{-1, -1}, {-1, -1}, {3, -1}, {-1, 2}};
+    SpOptions options = {.opener = 1, .closer = -1, .curve = SP_PRIMETIME,
+        .max_bpm = 18, .links = links};
+    int order[4];
+    assert(!sp_plan_order(tracks, 0, &options, order));
+    assert(sp_plan_order(tracks, 4, &options, order));
+    /* The sequence's exit tempo determines which track should follow it. */
+    assert_sequence(order, 4, (int[]){1, 3, 2, 0}, 4);
+    assert(sp_measure(tracks, 4, order, &options).tempo_jumps == 1);
+
+    options.opener = 2;
+    assert(!sp_plan_order(tracks, 4, &options, order));
+    options.opener = 3;
+    options.closer = 3;
+    assert(!sp_plan_order(tracks, 4, &options, order));
+    options.closer = 2;
+    assert(!sp_plan_order(tracks, 4, &options, order));
+
+    links[2].next = 0;
+    links[0] = (SpLink){2, 1};
+    links[1].previous = 0;
+    options.closer = 1;
+    assert(sp_plan_order(tracks, 4, &options, order));
+    assert_sequence(order, 4, (int[]){3, 2, 0, 1}, 4);
+    options.closer = 4;
+    assert(!sp_plan_order(tracks, 4, &options, order));
+    options.opener = options.closer = -1;
+    options.cancelled = cancel_plan;
+    assert(!sp_plan_order(tracks, 4, &options, order));
+    options.cancelled = NULL;
+    links[1].next = 3;
+    links[3].previous = 1;
+    assert(!sp_plan_order(tracks, 4, &options, order));
+    links[1].next = 4;
+    assert(!sp_plan_order(tracks, 4, &options, order));
+    links[1].next = -1;
+    assert(!sp_plan_order(tracks, 4, &options, order));
+}
+
+static void test_many_sequences(void)
+{
+    SpTrack tracks[LARGE];
+    int order[LARGE];
+    SpTrackSetup setup = {0};
+    SpOptions options = {.opener = -1, .closer = -1, .curve = SP_OPENING,
+        .max_bpm = 18, .time_aware = true};
+    assert(sp_init_track_setup(&setup, LARGE));
+    for (int i = 0; i < LARGE; ++i)
+        tracks[i] = (SpTrack){.bpm = 100 + i % 26, .duration = 180 + i % 16,
+            .energy = 1 + i % 10, .energy_known = true, .key = 1 + i % 12};
+    for (int i = 0; i < 96; i += 3) {
+        sp_start_sequence(&setup, 100 + i / 3);
+        assert(sp_toggle_sequence_track(&setup, i));
+        assert(sp_toggle_sequence_track(&setup, i + 2));
+        assert(!sp_lock_sequence(&setup, &options));
+    }
+    options.links = setup.links;
+    assert(sp_plan_order(tracks, LARGE, &options, order));
+    assert_permutation(order, LARGE);
+    for (int i = 0; i < 96; i += 3)
+        assert_sequence(order, LARGE, (int[]){100 + i / 3, i, i + 2}, 3);
+    assert(sp_measure(tracks, LARGE, order, &options).score <=
+           sp_measure(tracks, LARGE, setup.order, &options).score);
+    sp_clear_track_setup(&setup);
+}
+
+static void test_sequence_endpoints(void)
+{
+    SpTrackSetup setup = {0};
+    SpOptions options = {.opener = -1, .closer = -1};
+    assert(sp_init_track_setup(&setup, 3));
+    assert(sp_set_endpoint(&setup, &options, 1, true));
+    assert(sp_set_endpoint(&setup, &options, 0, false));
+    assert(!memcmp(setup.order, (int[]){1, 2, 0}, sizeof (int[3])));
+
+    sp_start_sequence(&setup, 2);
+    assert(sp_toggle_sequence_track(&setup, 1));
+    assert(strstr(sp_lock_sequence(&setup, &options), "opener first"));
+    sp_cancel_sequence(&setup);
+    sp_start_sequence(&setup, 0);
+    assert(sp_toggle_sequence_track(&setup, 2));
+    assert(strstr(sp_lock_sequence(&setup, &options), "closer last"));
+    sp_cancel_sequence(&setup);
+    sp_start_sequence(&setup, 1);
+    assert(sp_toggle_sequence_track(&setup, 0));
+    assert(strstr(sp_lock_sequence(&setup, &options), "same sequence"));
+    sp_cancel_sequence(&setup);
+
+    sp_start_sequence(&setup, 1);
+    assert(sp_toggle_sequence_track(&setup, 2));
+    assert(sp_toggle_sequence_track(&setup, 0));
+    assert(!sp_lock_sequence(&setup, &options));
+    assert(sp_set_endpoint(&setup, &options, 2, false) && options.closer == -1);
+    assert(sp_set_endpoint(&setup, &options, 2, false) && options.closer == 0);
+    assert(!memcmp(setup.order, (int[]){1, 2, 0}, sizeof (int[3])));
+    sp_clear_track_setup(&setup);
+}
+
 static void screen_draw(const char *expected)
 {
     drawn[0] = '\0';
@@ -749,10 +864,18 @@ static void click_row(int index)
         assert(input_at(AZ_EV_TAP, 0, 1100, 22));
         return;
     }
-    int top = page == SP_PICK_START || page == SP_PICK_END ? 92 : 56;
+    int top = page == SP_TRACKS ? 92 : 56;
     if (planner_visible && page == SP_SETUP)
         top = 163;
+    if (page == SP_TRACKS)
+        index -= running->top;
     assert(input(AZ_EV_TAP, 0, top + index * 48));
+}
+
+static void tap_track_action(int slot)
+{
+    int width = (planner_area.w - 2 * SP_INSET) / 5;
+    assert(input_at(AZ_EV_TAP, 0, SP_INSET + width * slot + 10, planner_area.h - 32));
 }
 
 static void finish(const az_mod_v1 *mod, int expected)
@@ -807,12 +930,14 @@ static void pin_tracks(void)
 {
     screen_draw("Automatic");
     click_row(0);
-    screen_draw("Choose opener");
-    click_row(3);
+    screen_draw("Track setup");
+    click_row(2);
+    tap_track_action(2);
+    screen_draw("Clear opener");
     click_row(1);
-    screen_draw("Choose closer");
-    click_row(1);
+    tap_track_action(3);
     assert(running->options.opener == 2 && running->options.closer == 0);
+    tap_track_action(4);
 }
 
 static void preview_playlist(const az_mod_v1 *mod, uint32_t id, const char *name)
@@ -820,7 +945,7 @@ static void preview_playlist(const az_mod_v1 *mod, uint32_t id, const char *name
     notify_action(id, true, name);
     finish(mod, AZ_OK);
     screen_draw(name);
-    click_row(2);
+    click_row(1);
     finish(mod, AZ_OK);
 }
 
@@ -1023,7 +1148,7 @@ static void test_curve_editor(const az_mod_v1 *mod)
     assert(fabs(running->options.custom_arc.points[1].position - 0.92) < 0.001);
     assert(running->options.custom_arc.points[1].energy == 10);
 
-    click_row(2);
+    click_row(1);
     finish(mod, AZ_OK);
     screen_draw("Custom curve");
     SpModel *model = &running->model;
@@ -1063,7 +1188,7 @@ static void test_back_with_pending_move(const az_mod_v1 *mod)
     notify_action(44, true, "Party");
     finish(mod, AZ_OK);
     pin_tracks();
-    click_row(2);
+    click_row(1);
     finish(mod, AZ_OK);
     busy_after_move = 100;
     click_row(0);
@@ -1071,6 +1196,121 @@ static void test_back_with_pending_move(const az_mod_v1 *mod)
     finish(mod, AZ_BUSY);
     assert(moves == 1 && !running->model.verified);
     assert(input(AZ_EV_BACK, 0, 0) && !planner_visible && !planner_focus);
+}
+
+static void test_sequence_selection_scroll(const az_mod_v1 *mod)
+{
+    fixture(50);
+    notify_action(44, true, "Party");
+    finish(mod, AZ_OK);
+    screen_draw("Track setup");
+    click_row(0);
+    screen_draw("Start sequence");
+    int rail = planner_area.w - 9;
+    assert(input_at(AZ_EV_TAP, 0, rail, 350));
+    screen_draw("Test track 25");
+    click_row(24);
+    tap_track_action(0);
+    screen_draw("1 selected  |  Test track 25");
+    tap_track_action(0);
+    screen_draw("Select at least two tracks.");
+    assert(input_at(AZ_EV_TAP, 0, rail, 490));
+    screen_draw("Test track 46");
+    click_row(45);
+    screen_draw("Test track 25 > Test track 46");
+    tap_track_action(0);
+    screen_draw("1 locked sequence");
+    SpTrackSetup *setup = &running->model.setup;
+    assert(setup->order[24] == 24 && setup->order[25] == 45 && setup->order[26] == 25);
+    assert(entries[45].entry_id == 145 && !moves && !requests);
+    assert(input(AZ_EV_BACK, 0, 0) && input(AZ_EV_BACK, 0, 0));
+}
+
+static void build_test_sequences(void)
+{
+    click_row(2);
+    tap_track_action(0);
+    click_row(5);
+    screen_draw("Test track 5 > Test track 2");
+    tap_track_action(0);
+    screen_draw("Unlock sequence");
+    click_row(5);
+    assert(input(AZ_EV_CLICK, 0, 0));
+    click_row(2);
+    screen_draw("already in another locked sequence");
+    click_row(1);
+    click_row(4);
+    tap_track_action(0);
+    screen_draw("2 locked sequences");
+    click_row(4);
+    tap_track_action(0);
+    screen_draw("3 selected");
+    click_row(4);
+    assert(input(AZ_EV_CLICK, 0, 0));
+    tap_track_action(0);
+    assert_sequence(running->model.setup.order, SMALL, (int[]){4, 3, 1}, 3);
+}
+
+static void test_grouped_preview_and_save(const az_mod_v1 *mod)
+{
+    fixture(SMALL);
+    notify_action(44, true, "Party");
+    finish(mod, AZ_OK);
+    screen_draw("0 sequences");
+    click_row(0);
+    screen_draw("Track setup");
+    build_test_sequences();
+    click_row(0);
+    tap_track_action(0);
+    tap_track_action(4);
+    assert(!running->model.setup.drafting);
+    tap_track_action(0);
+    assert(input(AZ_EV_BACK, 0, 0) && running->page == SP_TRACKS);
+    assert(!running->model.setup.drafting);
+
+    click_row(2);
+    tap_track_action(2);
+    assert(running->options.opener == 2);
+    tap_track_action(3);
+    screen_draw("Clear the other endpoint");
+    assert(running->options.closer == -1);
+    tap_track_action(2);
+    assert(running->options.opener == -1);
+    tap_track_action(2);
+    screen_draw("Clear opener");
+    click_row(4);
+    tap_track_action(3);
+    assert(running->options.closer == 1);
+    screen_draw("Clear closer");
+    click_row(2);
+    tap_track_action(0);
+    click_row(3);
+    tap_track_action(0);
+    screen_draw("3 locked sequences");
+    tap_track_action(1);
+    screen_draw("2 locked sequences");
+    tap_track_action(4);
+    screen_draw("2 sequences");
+    assert(!moves && !requests);
+    click_row(1);
+    finish(mod, AZ_OK);
+    screen_draw("Set preview");
+    const int expected[] = {2, 5, 0, 6, 4, 3, 1};
+    const int *target = running->model.target;
+    assert(target[0] == 2 && target[1] == 5);
+    assert_sequence(target + 4, 3, expected + 4, 3);
+    assert(entries[1].track_id == entries[3].track_id && !moves);
+    assert(input(AZ_EV_BACK, 0, 0));
+    screen_draw("2 sequences");
+    click_row(2);
+    finish(mod, AZ_OK);
+    assert_sequence(running->model.target, SMALL, expected, SMALL);
+    click_row(0);
+    respond(1);
+    finish(mod, AZ_OK);
+    assert(entries[0].entry_id == 102 && entries[1].entry_id == 105);
+    assert(entries[4].entry_id == 104 && entries[5].entry_id == 103 && entries[6].entry_id == 101);
+    assert(input(AZ_EV_BACK, 0, 0) && !planner_visible);
 }
 
 static void test_screen(void)
@@ -1107,7 +1347,7 @@ static void test_screen(void)
     assert(running->energy_choice.kind == AZ_PHRASE_CHORUS);
     assert(running->energy_choice.occurrence == SP_MIDDLE);
     pin_tracks();
-    click_row(3);
+    click_row(2);
     finish(mod, AZ_OK);
     screen_draw("Set preview");
     assert(strstr(drawn, "..."));
@@ -1131,7 +1371,7 @@ static void test_screen(void)
     finish(mod, AZ_OK);
     screen_draw("Plan set\nParty");
     pin_tracks();
-    click_row(2);
+    click_row(1);
     finish(mod, AZ_OK);
     screen_draw("7 cached");
     assert(strstr(drawn, "Energy\n") && !strstr(drawn, "\n0.0\n"));
@@ -1164,6 +1404,8 @@ static void test_screen(void)
     test_transition_display(mod);
     test_curve_editor(mod);
     test_zoom_ui(mod);
+    test_sequence_selection_scroll(mod);
+    test_grouped_preview_and_save(mod);
     notify_action(44, true, "Party");
     finish(mod, AZ_OK);
     current_view = AZ_VIEW_SOURCE;
@@ -1194,6 +1436,9 @@ int main(void)
     assert(mkdir(drive, 0700) == 0 && mkdir(mods, 0700) == 0 && mkdir(community, 0700) == 0);
     assert(mkdir(plugin, 0700) == 0 && mkdir(data, 0700) == 0);
     test_algorithm();
+    test_sequence_optimizer();
+    test_many_sequences();
+    test_sequence_endpoints();
     test_timeline_axes();
     test_library();
     test_energy();

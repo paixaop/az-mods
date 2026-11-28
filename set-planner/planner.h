@@ -16,12 +16,14 @@ typedef struct {
 enum { SP_ARC_POINTS = 4 };
 typedef struct { double position, energy; } SpAnchor;
 typedef struct { SpAnchor points[SP_ARC_POINTS]; int count; } SpArc;
+typedef struct { int previous, next; } SpLink;
 
 typedef struct {
     int curve;
     double max_bpm;
     bool halftime, time_aware;
     int opener, closer;
+    const SpLink *links;
     SpArc custom_arc;
     bool (*cancelled)(void *user);
     void *user;
@@ -48,6 +50,9 @@ double sp_tempo_gap(const SpTrack *a, const SpTrack *b, bool halftime);
 SpTransition sp_transition(const SpTrack *a, const SpTrack *b, const SpOptions *options);
 bool sp_normalize_energy(SpTrack *tracks, int count);
 bool sp_plan_order(const SpTrack *tracks, int count, const SpOptions *options, int *out);
+int sp_sequence_head(const SpLink *links, int entry);
+int sp_sequence_tail(const SpLink *links, int entry);
+int *sp_append_sequence(const SpLink *links, int entry, int *out);
 SpMetrics sp_measure(const SpTrack *tracks, int count, const int *order, const SpOptions *options);
 int sp_plan_moves(const int *target, int count, SpMove *out, const SpOptions *options);
 void sp_relocate(int *order, int from, int to);

@@ -5,9 +5,10 @@
 #include <string.h>
 
 enum { COL_HEADER = 36, PREVIEW_ROWS = 1 };
+enum { SETUP_TRACKS, SETUP_PREVIEW, SETUP_REFRESH, SETUP_ROWS };
 static const int tempo_limits[] = {18, 4, 8, 12};
 
-static void open_page(SpRuntime *runtime, enum SpPage page)
+void sp_open_page(SpRuntime *runtime, enum SpPage page)
 {
     sp_reset_drag(runtime);
     runtime->page = page;
@@ -16,6 +17,7 @@ static void open_page(SpRuntime *runtime, enum SpPage page)
     runtime->compare = false;
     runtime->chart_detail = false;
     runtime->chart_first = 0;
+    runtime->track_hint = NULL;
 }
 
 static int energy_rows(SpEnergyChoice choice)
@@ -32,10 +34,9 @@ static int item_count(const SpRuntime *runtime)
     int count = (int)runtime->model.source.identity.total;
     switch (runtime->page) {
     case SP_SETTINGS: return 5;
-    case SP_SETUP: return 4;
+    case SP_SETUP: return SETUP_ROWS;
     case SP_NOTICE: return 0;
-    case SP_PICK_START:
-    case SP_PICK_END: return count + 1;
+    case SP_TRACKS: return count;
     case SP_ORDER: return count + PREVIEW_ROWS;
     case SP_ENERGY: return energy_rows(runtime->energy_choice);
     }
@@ -45,7 +46,7 @@ static int item_count(const SpRuntime *runtime)
 static const char *page_title(enum SpPage page)
 {
     static const char *const titles[] = {"Set Planner settings", "Plan set",
-        "Choose opener", "Choose closer", "Set preview", "Energy source", "Set Planner"};
+        "Track setup", "Set preview", "Energy source", "Set Planner"};
     return titles[page];
 }
 
@@ -115,7 +116,6 @@ static SettingRow setting_row(const SpRuntime *runtime, int index, char *text, s
 static SettingRow row_content(const SpRuntime *runtime, int index, char *text, size_t size)
 {
     const SpModel *model = &runtime->model;
-    const SpOptions *options = &runtime->options;
     SpEnergyChoice choice = runtime->energy_choice;
     if (runtime->page == SP_SETTINGS)
         return setting_row(runtime, index, text, size);
@@ -125,9 +125,12 @@ static SettingRow row_content(const SpRuntime *runtime, int index, char *text, s
         return rows[index];
     }
     switch (index) {
-    case 0: return (SettingRow){"Opener", endpoint(model, options->opener)};
-    case 1: return (SettingRow){"Closer", endpoint(model, options->closer)};
-    case 2: return (SettingRow){"Preview set", ""};
+    case SETUP_TRACKS: {
+        int count = model->setup.sequence_count;
+        snprintf(text, size, "%d %s", count, count == 1 ? "sequence" : "sequences");
+        return (SettingRow){"Track setup", text};
+    }
+    case SETUP_PREVIEW: return (SettingRow){"Preview set", ""};
     default: return (SettingRow){"Refresh analysis and preview", ""};
     }
 }
@@ -302,7 +305,7 @@ void sp_label(const Paint *p, int x, int y, const char *value, int px, int width
 
 static bool table_page(enum SpPage page)
 {
-    return page == SP_ORDER || page == SP_PICK_START || page == SP_PICK_END;
+    return page == SP_ORDER || page == SP_TRACKS;
 }
 
 static int row_start(const SpRuntime *runtime)
@@ -432,9 +435,9 @@ static void draw_columns(const Paint *p)
     const SpRuntime *r = p->runtime;
     int y = r->area.y + SP_HEADER;
     sp_rect(p, r->area.x, y, r->area.w, COL_HEADER, p->head);
-    const char *headers[] = {"#", "Track", "Artist", "BPM", "Key", "Energy"};
-    int count = r->page == SP_ORDER ? 6 : 5;
-    for (int i = 0; i < count; ++i) {
+    const char *headers[] = {"#", "Track", "Artist", "BPM", "Key",
+        r->page == SP_ORDER ? "Energy" : "Status"};
+    for (int i = 0; i < 6; ++i) {
         if (i)
             sp_rect(p, x_at(r, columns[i]), y, 1, COL_HEADER, p->rule);
         column(p, i, y + 5, headers[i], 18, p->dim);
@@ -504,20 +507,20 @@ static void draw_track(const Paint *p, int index, int y, uint32_t color)
     const SpRuntime *runtime = p->runtime;
     const SpModel *model = &runtime->model;
     bool preview = runtime->page == SP_ORDER;
-    if (!preview && index == 0) {
-        column(p, 1, y, "Automatic", 22, color);
-        return;
-    }
-    int i = preview ? model->target[index - 1] : index - 1;
+    int i = preview ? model->target[index - PREVIEW_ROWS] : model->setup.order[index];
     const SpTrack *track = &model->tracks[i];
     char number[24];
-    snprintf(number, sizeof number, "%03d", index);
+    snprintf(number, sizeof number, "%d", preview ? index : index + 1);
+    int row_y = y - (runtime->row_height - 33) / 2;
+    sp_draw_sequence_mark(p, i, runtime->area.x + 6, row_y, runtime->row_height);
     column(p, 0, y, number, 22, color);
     column(p, 1, y, sp_display_title(track), 22, color);
     column(p, 2, y, track->artist, 22, color);
     draw_track_details(p, track, index, y, color);
     if (preview)
         draw_energy(p, &model->inputs[i], y, color);
+    else
+        sp_draw_track_state(p, i, x_at(runtime, columns[5]) + 5, y, runtime->area.w * 8 / 100 - 30);
 }
 
 static void draw_setting(const Paint *p, int index, int y, uint32_t color)
@@ -541,7 +544,8 @@ static void draw_scrollbar(const Paint *p, int count)
     int height = r->visible * r->row_height;
     int thumb = (int)sp_clamp((double)height * r->visible / count, 12, height);
     int y = track_start(r) + (height - thumb) * r->top / (count - r->visible);
-    sp_rect(p, r->area.x + r->area.w - 4, y, 4, thumb, p->rule);
+    int width = r->page == SP_TRACKS ? 8 : 4;
+    sp_rect(p, r->area.x + r->area.w - width, y, width, thumb, p->rule);
 }
 
 static void draw_rows(const Paint *p)
@@ -568,8 +572,8 @@ static void setup_control(const Paint *p, az_rect box, int index)
     const SpRuntime *r = p->runtime;
     char value[96];
     SettingRow row = row_content(r, index, value, sizeof value);
-    uint32_t bg = index == 2 ? p->action : (r->cursor == index ? p->select : p->head);
-    uint32_t fg = index == 2 ? 0xffffff : p->text;
+    uint32_t bg = index == SETUP_PREVIEW ? p->action : (r->cursor == index ? p->select : p->head);
+    uint32_t fg = index == SETUP_PREVIEW ? 0xffffff : p->text;
     sp_rect(p, box.x, box.y, box.w, box.h, bg);
     if (r->cursor == index)
         sp_rect(p, box.x, box.y, 3, box.h, p->energy);
@@ -577,6 +581,15 @@ static void setup_control(const Paint *p, az_rect box, int index)
     if (*row.value)
         sp_label(p, box.x + 155, box.y + 9, row.value, 17, box.w - 192, p->dim);
     sp_label(p, box.x + box.w - 27, box.y + 8, ">", 18, 20, fg);
+}
+
+static void draw_endpoints(const Paint *p, az_rect box, int y)
+{
+    const SpRuntime *r = p->runtime;
+    sp_label(p, box.x + 20, y, "Opener", 16, 77, p->dim);
+    sp_label(p, box.x + 101, y, endpoint(&r->model, r->options.opener), 17, box.w - 121, p->text);
+    sp_label(p, box.x + 20, y + 25, "Closer", 16, 77, p->dim);
+    sp_label(p, box.x + 101, y + 25, endpoint(&r->model, r->options.closer), 17, box.w - 121, p->text);
 }
 
 static void draw_setup(const Paint *p)
@@ -591,9 +604,10 @@ static void draw_setup(const Paint *p)
     snprintf(summary, sizeof summary, "%u tracks  /  USB %d", r->model.source.identity.total,
              r->model.stick + 1);
     sp_label(p, x + 19, box.y + 48, summary, 17, w - 38, p->dim);
-    for (int i = 0; i < 4; ++i)
+    for (int i = 0; i < SETUP_ROWS; ++i)
         setup_control(p, (az_rect){x + 16, track_start(r) + i * r->row_height,
                       w - 32, r->row_height - 6}, i);
+    draw_endpoints(p, box, track_start(r) + SETUP_ROWS * r->row_height + 5);
     energy_summary(r->energy_choice, energy, sizeof energy);
     snprintf(summary, sizeof summary, "Energy source: %s", energy);
     sp_draw_setup_arc(p, summary);
@@ -645,6 +659,8 @@ static void reveal_cursor(SpRuntime *r)
         r->top = r->cursor;
     if (r->cursor >= row_start(r) + r->visible)
         r->top = r->cursor - r->visible + 1;
+    if (r->page == SP_TRACKS)
+        r->top = (int)sp_clamp(r->top, 0, fmax(0, item_count(r) - r->visible));
 }
 
 static void layout_rows(SpRuntime *r, az_rect area)
@@ -654,7 +670,8 @@ static void layout_rows(SpRuntime *r, az_rect area)
         r->visible = (list.h - SP_LIST_HEADER - 2) / SP_ROW;
         return;
     }
-    r->visible = (int)sp_clamp((area.y + area.h - SP_FOOTER - track_start(r)) / r->row_height, 1, 32);
+    int footer = r->page == SP_TRACKS ? SP_TRACK_FOOTER : SP_FOOTER;
+    r->visible = (int)sp_clamp((area.y + area.h - footer - track_start(r)) / r->row_height, 1, 32);
 }
 
 static void draw_body(const Paint *p)
@@ -691,23 +708,37 @@ static void on_draw(az_draw *draw, az_rect area, void *user)
         return;
     }
     draw_body(&paint);
-    draw_footer(&paint);
+    if (r->page == SP_TRACKS)
+        sp_draw_track_footer(&paint);
+    else
+        draw_footer(&paint);
+}
+
+static void back_from_tracks(SpRuntime *r)
+{
+    if (r->model.setup.drafting) {
+        sp_cancel_sequence(&r->model.setup);
+        r->track_hint = NULL;
+    } else {
+        sp_open_page(r, SP_SETUP);
+    }
 }
 
 static int back(SpRuntime *runtime)
 {
     switch (runtime->page) {
     case SP_SETTINGS: return 0;
-    case SP_ENERGY: open_page(runtime, SP_SETTINGS); break;
+    case SP_ENERGY: sp_open_page(runtime, SP_SETTINGS); break;
     case SP_SETUP:
     case SP_NOTICE: sp_close_planner(runtime); break;
+    case SP_TRACKS: back_from_tracks(runtime); break;
     case SP_ORDER:
         if (save_has_progress(&runtime->model))
             sp_close_planner(runtime);
         else
-            open_page(runtime, SP_SETUP);
+            sp_open_page(runtime, SP_SETUP);
         break;
-    default: open_page(runtime, SP_SETUP); break;
+    default: sp_open_page(runtime, SP_SETUP); break;
     }
     runtime->result = AZ_OK;
     runtime->sync_failed = false;
@@ -728,7 +759,7 @@ static void settings_select(SpRuntime *runtime)
 {
     SpOptions *options = &runtime->options;
     switch (runtime->cursor) {
-    case 0: open_page(runtime, SP_ENERGY); break;
+    case 0: sp_open_page(runtime, SP_ENERGY); break;
     case 1:
         options->curve = (options->curve + 1) % SP_CURVES;
         runtime->core->cfg_set(SP_ID, "curve", options->curve);
@@ -751,12 +782,11 @@ static void settings_select(SpRuntime *runtime)
 static void setup_select(SpRuntime *runtime)
 {
     switch (runtime->cursor) {
-    case 0: open_page(runtime, SP_PICK_START); break;
-    case 1: open_page(runtime, SP_PICK_END); break;
-    case 2:
-    case 3:
+    case SETUP_TRACKS: sp_open_page(runtime, SP_TRACKS); break;
+    case SETUP_PREVIEW:
+    case SETUP_REFRESH:
         sp_reset_drag(runtime);
-        sp_post_job(runtime, runtime->cursor == 2 ? SP_PREVIEW : SP_REFRESH);
+        sp_post_job(runtime, runtime->cursor == SETUP_PREVIEW ? SP_PREVIEW : SP_REFRESH);
         break;
     }
 }
@@ -778,17 +808,6 @@ static void choose_energy(SpRuntime *runtime)
         runtime->core->cfg_set(SP_ID, "occurrence", choice->occurrence);
         break;
     }
-}
-
-static void choose_endpoint(SpRuntime *runtime)
-{
-    SpOptions *options = &runtime->options;
-    int *picked = runtime->page == SP_PICK_START ? &options->opener : &options->closer;
-    int *other = runtime->page == SP_PICK_START ? &options->closer : &options->opener;
-    *picked = runtime->cursor - 1;
-    if (*other == *picked)
-        *other = -1;
-    open_page(runtime, SP_SETUP);
 }
 
 static void confirm_save(int yes, void *user)
@@ -830,8 +849,7 @@ static void select_row(SpRuntime *runtime)
     case SP_SETTINGS: settings_select(runtime); break;
     case SP_NOTICE: break;
     case SP_SETUP: setup_select(runtime); break;
-    case SP_PICK_START:
-    case SP_PICK_END: choose_endpoint(runtime); break;
+    case SP_TRACKS: sp_select_setup_track(runtime, false); break;
     case SP_ORDER: order_select(runtime); break;
     case SP_ENERGY: choose_energy(runtime); break;
     }
@@ -878,22 +896,42 @@ static bool tap_setup_arc(SpRuntime *r, const az_event *event)
     return true;
 }
 
+static void tap_row(SpRuntime *r, int y)
+{
+    if (y < 0 || y >= r->visible * r->row_height)
+        return;
+    int index = row_start(r) + y / r->row_height;
+    if (index < item_count(r)) {
+        move_cursor(r, index);
+        if (r->page == SP_TRACKS)
+            sp_select_setup_track(r, true);
+        else
+            select_row(r);
+    }
+}
+
+static void tap_tracks(SpRuntime *r, const az_event *event)
+{
+    int start = track_start(r);
+    if (event->y >= r->area.y + r->area.h - SP_TRACK_FOOTER)
+        sp_tap_track_footer(r, event);
+    else if (!sp_tap_track_scroll(r, event->x, event->y, start))
+        tap_row(r, event->y - start);
+}
+
 static void tap_content(SpRuntime *r, const az_event *event)
 {
+    if (r->page == SP_TRACKS) {
+        tap_tracks(r, event);
+        return;
+    }
     if (r->page == SP_ORDER && sp_dashboard(r)) {
         sp_tap_review(r, event);
         return;
     }
     if (r->page == SP_SETUP && sp_dashboard(r) && tap_setup_arc(r, event))
         return;
-    int y = event->y - track_start(r);
-    if (y < 0 || y >= r->visible * r->row_height)
-        return;
-    int index = row_start(r) + y / r->row_height;
-    if (index < item_count(r)) {
-        move_cursor(r, index);
-        select_row(r);
-    }
+    tap_row(r, event->y - track_start(r));
 }
 
 static void tap(SpRuntime *r, const az_event *event)
@@ -944,10 +982,10 @@ static void completed(SpRuntime *runtime)
     if (runtime->job != SP_APPLY)
         runtime->sync_failed = false;
     switch (runtime->job) {
-    case SP_LOAD: open_page(runtime, SP_SETUP); break;
+    case SP_LOAD: sp_open_page(runtime, SP_SETUP); break;
     case SP_PREVIEW:
     case SP_REFRESH:
-        open_page(runtime, SP_ORDER);
+        sp_open_page(runtime, SP_ORDER);
         runtime->cursor = runtime->model.source.identity.total > 1 ? 2 : 1;
         break;
     default: break;
