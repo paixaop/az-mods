@@ -68,7 +68,8 @@ static void review_row(const Paint *p, az_rect row, int index)
     if (track->bpm > 0)
         snprintf(bpm, sizeof bpm, "%.1f", track->bpm);
     list_warning(p, row, index);
-    sp_label(p, row.x + 16, row.y + 14, number, 16, 43, p->dim);
+    sp_draw_sequence_mark(p, entry, row.x + 10, row.y, row.h);
+    sp_label(p, row.x + 20, row.y + 14, number, 16, 39, p->dim);
     sp_label(p, row.x + 62, row.y + 4, sp_display_title(track), 18, row.w - 247, p->text);
     sp_label(p, row.x + 62, row.y + 29, track->artist, 14, row.w - 247, p->dim);
     sp_label(p, end - 174, row.y + 14, bpm, 17, 65, p->tempo);

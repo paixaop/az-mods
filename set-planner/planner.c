@@ -616,14 +616,56 @@ static bool cluster_order(const SpTrack *tracks, const SpOptions *options,
     return result && !interrupted(options);
 }
 
-static void anneal(const SpTrack *tracks, int count, const SpOptions *options,
-                   int *candidate, int *best)
+int sp_sequence_head(const SpLink *links, int entry)
 {
-    int first = options->opener >= 0;
-    int movable = count - first - (options->closer >= 0);
-    size_t bytes = (size_t)count * sizeof *best;
-    double current = sp_measure(tracks, count, candidate, options).score;
-    double best_score = sp_measure(tracks, count, best, options).score;
+    while (entry >= 0 && links[entry].previous >= 0)
+        entry = links[entry].previous;
+    return entry;
+}
+
+int sp_sequence_tail(const SpLink *links, int entry)
+{
+    while (entry >= 0 && links[entry].next >= 0)
+        entry = links[entry].next;
+    return entry;
+}
+
+int *sp_append_sequence(const SpLink *links, int entry, int *out)
+{
+    for (; entry >= 0; entry = links[entry].next)
+        *out++ = entry;
+    return out;
+}
+
+typedef struct {
+    const SpTrack *tracks;
+    const SpOptions *options;
+    int count, units, first, movable;
+    int *expanded;
+} AnnealPlan;
+
+static int *expand_order(const SpLink *links, const int *heads, int units, int *out)
+{
+    for (int i = 0; i < units; ++i)
+        out = sp_append_sequence(links, heads[i], out);
+    return out;
+}
+
+static double order_score(const AnnealPlan *plan, const int *order)
+{
+    if (plan->expanded) {
+        expand_order(plan->options->links, order, plan->units, plan->expanded);
+        order = plan->expanded;
+    }
+    return sp_measure(plan->tracks, plan->count, order, plan->options).score;
+}
+
+static void anneal(const AnnealPlan *plan, int *candidate, int *best)
+{
+    int first = plan->first, movable = plan->movable;
+    size_t bytes = (size_t)plan->units * sizeof *best;
+    double current = order_score(plan, candidate);
+    double best_score = order_score(plan, best);
     if (current < best_score) {
         memcpy(best, candidate, bytes);
         best_score = current;
@@ -632,11 +674,11 @@ static void anneal(const SpTrack *tracks, int count, const SpOptions *options,
         return;
     uint32_t seed = 0x6f15a771;
     double temperature = 100;
-    for (int iteration = 0; iteration < 1000 && !interrupted(options); ++iteration) {
+    for (int iteration = 0; iteration < 1000 && !interrupted(plan->options); ++iteration) {
         int lo = first + (int)(random_u32(&seed) % (uint32_t)(movable - 1));
         int hi = lo + 1 + (int)(random_u32(&seed) % (uint32_t)(first + movable - lo - 1));
         reverse(candidate, lo, hi);
-        double score = sp_measure(tracks, count, candidate, options).score;
+        double score = order_score(plan, candidate);
         if (score <= current || random_unit(&seed) < exp((current - score) / temperature)) {
             current = score;
             if (score < best_score) {
@@ -664,10 +706,9 @@ static int anchored_order(int count, const SpOptions *options, int *out, int *fi
     return next - *first;
 }
 
-bool sp_plan_order(const SpTrack *tracks, int count, const SpOptions *options, int *out)
+static bool plan_individual_tracks(const SpTrack *tracks, int count, const SpOptions *options,
+                                   int *out)
 {
-    if (count < 1)
-        return false;
     if (count == 1) {
         out[0] = 0;
         return true;
@@ -682,10 +723,100 @@ bool sp_plan_order(const SpTrack *tracks, int count, const SpOptions *options, i
         return false;
     memcpy(candidate, out, bytes);
     bool result = cluster_order(tracks, options, out + first, pool_count, candidate + first);
+    AnnealPlan plan = {tracks, options, count, count, first, pool_count, NULL};
     if (result)
-        anneal(tracks, count, options, candidate, out);
+        anneal(&plan, candidate, out);
     free(candidate);
     return result && !interrupted(options);
+}
+
+static bool valid_entry(int entry, int count)
+{
+    return entry >= -1 && entry < count;
+}
+
+static bool reciprocal_link(const SpLink *links, int count, int entry, bool forward)
+{
+    int other = forward ? links[entry].next : links[entry].previous;
+    if (!valid_entry(other, count))
+        return false;
+    return other == -1 || (forward ? links[other].previous : links[other].next) == entry;
+}
+
+static bool valid_sequences(const SpLink *links, int count, const SpOptions *options)
+{
+    for (int i = 0; i < count; ++i)
+        if (!reciprocal_link(links, count, i, true) || !reciprocal_link(links, count, i, false))
+            return false;
+    int first = options->opener, last = options->closer;
+    if (!valid_entry(first, count) || !valid_entry(last, count))
+        return false;
+    return (first == -1 || links[first].previous == -1) &&
+           (last == -1 || links[last].next == -1);
+}
+
+static int anchored_sequences(const SpLink *links, int count, int first, int last, int *heads)
+{
+    int units = 0;
+    if (first >= 0)
+        heads[units++] = first;
+    for (int entry = 0; entry < count; ++entry)
+        if (links[entry].previous == -1 && entry != first && entry != last)
+            heads[units++] = entry;
+    if (last >= 0 && last != first)
+        heads[units++] = last;
+    return units;
+}
+
+static bool sequence_seed(const AnnealPlan *plan, const int *heads, int *candidate)
+{
+    memcpy(candidate, heads, (size_t)plan->units * sizeof *heads);
+    if (!plan->movable)
+        return true;
+    SpOptions seed = *plan->options;
+    seed.opener = sp_sequence_tail(seed.links, seed.opener);
+    return cluster_order(plan->tracks, &seed, heads + plan->first,
+                         plan->movable, candidate + plan->first);
+}
+
+static bool optimize_sequences(const AnnealPlan *plan, int *heads, int *candidate)
+{
+    int *end = expand_order(plan->options->links, heads, plan->units, plan->expanded);
+    if (end != plan->expanded + plan->count)
+        return false;
+    if (!sequence_seed(plan, heads, candidate))
+        return false;
+    anneal(plan, candidate, heads);
+    expand_order(plan->options->links, heads, plan->units, plan->expanded);
+    return !interrupted(plan->options);
+}
+
+static bool plan_sequences(const SpTrack *tracks, int count, const SpOptions *options, int *out)
+{
+    if (!valid_sequences(options->links, count, options))
+        return false;
+    int *heads = malloc((size_t)count * 2 * sizeof *heads);
+    if (!heads)
+        return false;
+    int opener = options->opener, closer = sp_sequence_head(options->links, options->closer);
+    int units = anchored_sequences(options->links, count, opener, closer, heads);
+    int first = opener >= 0;
+    int movable = units - first - (closer >= 0 && closer != opener);
+    /* A sequence may occupy both ends when it contains the entire playlist. */
+    bool conflict = units > 1 && first && opener == closer;
+    AnnealPlan plan = {tracks, options, count, units, first, movable, out};
+    bool result = !conflict && optimize_sequences(&plan, heads, heads + count);
+    free(heads);
+    return result;
+}
+
+bool sp_plan_order(const SpTrack *tracks, int count, const SpOptions *options, int *out)
+{
+    if (count < 1)
+        return false;
+    if (options->links)
+        return plan_sequences(tracks, count, options, out);
+    return plan_individual_tracks(tracks, count, options, out);
 }
 
 void sp_relocate(int *order, int from, int to)

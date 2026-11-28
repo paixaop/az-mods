@@ -161,7 +161,10 @@ int sp_read_selection(SpRuntime *runtime)
     uint32_t count = model->source.identity.total;
     model->tracks = calloc(count, sizeof *model->tracks);
     model->inputs = calloc(count, sizeof *model->inputs);
-    status = model->tracks && model->inputs ? sp_refresh_tracks(runtime) : AZ_FAILED;
+    if (model->tracks && model->inputs && sp_init_track_setup(&model->setup, (int)count))
+        status = sp_refresh_tracks(runtime);
+    else
+        status = AZ_FAILED;
     if (status != AZ_OK)
         sp_discard_selection(model);
     return status;

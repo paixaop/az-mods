@@ -4,7 +4,7 @@
 
 #include "mod.h"
 
-enum { SP_HEADER = 54, SP_FOOTER = 48, SP_INSET = 16,
+enum { SP_HEADER = 54, SP_FOOTER = 48, SP_TRACK_FOOTER = 88, SP_INSET = 16,
     SP_ROW = 55, SP_LIST_HEADER = 67 };
 
 typedef struct {
@@ -34,5 +34,12 @@ void sp_draw_setup_arc(const Paint *p, const char *energy_source);
 void sp_draw_set_chart(const Paint *p, SpReviewLayout layout);
 void sp_draw_review(const Paint *p, SpReviewLayout layout);
 void sp_tap_review(SpRuntime *r, const az_event *event);
+void sp_open_page(SpRuntime *r, enum SpPage page);
+void sp_draw_track_footer(const Paint *p);
+void sp_draw_sequence_mark(const Paint *p, int entry, int x, int y, int height);
+void sp_draw_track_state(const Paint *p, int entry, int x, int y, int width);
+void sp_select_setup_track(SpRuntime *r, bool touch);
+void sp_tap_track_footer(SpRuntime *r, const az_event *event);
+bool sp_tap_track_scroll(SpRuntime *r, int x, int y, int start);
 
 #endif
