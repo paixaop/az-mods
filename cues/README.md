@@ -6,7 +6,13 @@ Open **Mod Menu → Community Mods → Installed → Cues**. Open or add a group
 
 Choose **Help** in Cues Settings or in the rule editor for a walkthrough and an example. **Back** returns to the rule you were editing.
 
+![Cues Settings rule editor showing a hot cue on the next free pad at the start of every Chorus/Drop phrase, with color set to By pad and a name that includes the phrase length](docs/cue-rule-editor.png)
+
 On the waveform screen, press **CUES**, then choose a logical deck. Manual application works with automatic placement switched off. If the track has hot cues or memory cues, a confirmation asks to replace the whole cue bank. Cancel leaves it untouched. A track change or a cue edit while the confirmation is open invalidates it. If no rules match, existing cues stay intact.
+
+![Deck 1 waveform showing red hot cue A at the track start, green hot cue B at the chorus start, and orange and yellow memory cue markers](docs/track-cues-applied.png)
+
+The default rules place hot cue **A** at the start of the track. The Chorus/Drop rule shown above places hot cue **B** at the start of the chorus. The orange and yellow triangles mark memory cues 32 and 16 bars before the chorus ends, respectively.
 
 **Config → Apply on track load** enables automatic placement, off by default. It waits for the analysis required by matching rules, the source sample rate, track duration and known cue state. Absolute rules need no phrase analysis. Beat/bar positions, beat/bar loop lengths and quantization wait for a usable grid before any part of the plan is saved. Any existing hot cue, memory cue or saved loop skips the entire track. Automatic placement never deletes or overwrites an existing bank. Saved definitions remain on the track after reload, so reloading a track containing them also skips placement. Changing rules does not repeat a completed automatic application on the same load; use the CUES button to replace an existing bank.
 
